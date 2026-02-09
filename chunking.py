@@ -26,10 +26,11 @@ CHUNKING_VERSION = 'v1'
 #   1. Standard sentence endings: .!? followed by space and uppercase or quote
 #   2. Ellipsis followed by space and uppercase
 #   3. Spoken discourse markers followed by uppercase (captures natural pauses)
+
 _SENTENCE_BOUNDARY = re.compile(
-    r'(?<=[.!?])\s+(?=[A-Z"\'])'           # standard: ". The" / "! She" / "? I"
-    r'|(?<=\.\.\.)\s+(?=[A-Z])'             # ellipsis: "... So"
-    r'|(?<=[.!?])\s+(?=\d)'                 # sentence ending before number: ". 3 days"
+    r'(?<=[.!?])\s+(?=[A-Z"\'])'     # standard: ". The" / "! She" / "? I"
+    r'|(?<=\.\.\.)\s+(?=[A-Z])'      # ellipsis: "... So"
+    r'|(?<=[.!?])\s+(?=\d)'          # sentence ending before number: ". 3 days"
 )
 
 
@@ -298,10 +299,8 @@ class TranscriptChunker:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--method', default=DEFAULT_CHUNKING_METHOD,
-                        choices=list(CHUNKING_CONFIGS.keys()))
-    parser.add_argument('--splits', nargs='+', default=None,
-                        help='Cohort splits to include (development, reliability, holdout)')
+    parser.add_argument('--method', default=DEFAULT_CHUNKING_METHOD, choices=list(CHUNKING_CONFIGS.keys()))
+    parser.add_argument('--splits', nargs='+', default=None, help='Cohort splits to include (development, reliability, holdout)')
     args = parser.parse_args()
 
     chunker = TranscriptChunker(method=args.method)
