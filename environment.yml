@@ -1,0 +1,13 @@
+name: tiktok-research
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - psycopg2>=2.9.9
+  - numpy>=1.26.2
+  - scipy>=1.11.0
+  - requests>=2.31.0
+  - python-dotenv>=1.0.0
+  - nltk>=3.9.0
+  - pytest>=8.0.0

@@ -41,6 +41,7 @@ class ReportGenerator:
         self.table_stability_by_temperature()
         self.table_coverage_clarity()
         self.table_label_distributions()
+        self.table_cost_efficiency()
         self.csv_stability_threshold_curve()
         self.csv_per_chunk_stability()
         self.csv_validation_results()
@@ -59,8 +60,13 @@ class ReportGenerator:
                     coverage_rate,
                     clarity_rate,
                     krippendorff_alpha,
+                    alpha_ci_lower,
+                    alpha_ci_upper,
+                    fleiss_kappa,
                     icc_value,
                     stability_rate,
+                    stability_ci_lower,
+                    stability_ci_upper,
                     mean_agreement
                 FROM group_reliability_metrics
                 WHERE experiment_id = %s
@@ -77,10 +83,10 @@ class ReportGenerator:
             cur.execute("""
                 SELECT
                     model_name,
-                    ROUND(AVG(stability_rate), 3) AS avg_stability_rate,
-                    ROUND(AVG(krippendorff_alpha), 3) AS avg_alpha,
-                    ROUND(AVG(coverage_rate), 3) AS avg_coverage,
-                    ROUND(AVG(clarity_rate), 3) AS avg_clarity,
+                    ROUND(AVG(stability_rate)::numeric, 3) AS avg_stability_rate,
+                    ROUND(AVG(krippendorff_alpha)::numeric, 3) AS avg_alpha,
+                    ROUND(AVG(coverage_rate)::numeric, 3) AS avg_coverage,
+                    ROUND(AVG(clarity_rate)::numeric, 3) AS avg_clarity,
                     SUM(num_chunks) AS total_chunks
                 FROM group_reliability_metrics
                 WHERE experiment_id = %s
@@ -99,9 +105,9 @@ class ReportGenerator:
                 SELECT
                     temperature,
                     construct_name,
-                    ROUND(AVG(stability_rate), 3) AS avg_stability_rate,
-                    ROUND(AVG(krippendorff_alpha), 3) AS avg_alpha,
-                    ROUND(AVG(mean_agreement), 3) AS avg_agreement
+                    ROUND(AVG(stability_rate)::numeric, 3) AS avg_stability_rate,
+                    ROUND(AVG(krippendorff_alpha)::numeric, 3) AS avg_alpha,
+                    ROUND(AVG(mean_agreement)::numeric, 3) AS avg_agreement
                 FROM group_reliability_metrics
                 WHERE experiment_id = %s
                 GROUP BY temperature, construct_name
@@ -119,10 +125,10 @@ class ReportGenerator:
                 SELECT
                     construct_name,
                     model_name,
-                    ROUND(AVG(none_rate), 3) AS avg_none_rate,
-                    ROUND(AVG(unclear_rate), 3) AS avg_unclear_rate,
-                    ROUND(1 - AVG(none_rate), 3) AS coverage,
-                    ROUND(1 - AVG(unclear_rate), 3) AS clarity,
+                    ROUND(AVG(none_rate)::numeric, 3) AS avg_none_rate,
+                    ROUND(AVG(unclear_rate)::numeric, 3) AS avg_unclear_rate,
+                    ROUND((1 - AVG(none_rate))::numeric, 3) AS coverage,
+                    ROUND((1 - AVG(unclear_rate))::numeric, 3) AS clarity,
                     COUNT(*) AS num_chunks
                 FROM annotation_stability_metrics
                 WHERE experiment_id = %s
@@ -160,6 +166,40 @@ class ReportGenerator:
 
         self._write_csv('table5_label_distributions.csv', rows)
         logger.info(f"  Table 5: Label distributions ({len(rows)} rows)")
+
+    def table_cost_efficiency(self):
+        """Table 6: Inference cost and efficiency per model."""
+        with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    model_name,
+                    COUNT(*) AS total_tasks,
+                    COUNT(DISTINCT chunk_id) AS unique_chunks,
+                    COUNT(DISTINCT construct_name) AS constructs_annotated,
+                    ROUND(SUM(processing_time_ms)::numeric / 1000.0 / 3600.0, 2) AS total_hours,
+                    ROUND(AVG(processing_time_ms)::numeric, 0) AS avg_ms_per_task,
+                    ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY processing_time_ms)::numeric, 0)
+                        AS median_ms_per_task,
+                    SUM(tokens_generated) AS total_tokens,
+                    ROUND(AVG(tokens_generated)::numeric, 0) AS avg_tokens_per_task
+                FROM llm_annotation_runs
+                WHERE experiment_id = %s
+                GROUP BY model_name
+                ORDER BY total_hours
+            """, (self.experiment_id,))
+            rows = cur.fetchall()
+
+        # Add estimated human equivalent (assuming ~60 annotations/hour for a trained coder)
+        HUMAN_RATE_PER_HOUR = 60
+        for row in rows:
+            tasks = row['total_tasks'] or 0
+            row['estimated_human_hours'] = round(tasks / HUMAN_RATE_PER_HOUR, 1)
+            llm_hours = float(row['total_hours'] or 0)
+            human_hours = row['estimated_human_hours']
+            row['speedup_factor'] = round(human_hours / llm_hours, 1) if llm_hours > 0 else None
+
+        self._write_csv('table6_cost_efficiency.csv', rows)
+        logger.info(f"  Table 6: Cost/efficiency ({len(rows)} rows)")
 
     def csv_stability_threshold_curve(self):
         """Data for Figure: Coverage vs stability threshold curves."""

@@ -31,7 +31,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-STEPS = ['schema', 'cohort', 'chunking', 'annotate', 'stability', 'final_labels', 'validation', 'reporting']
+STEPS = [
+    'schema', 'cohort', 'chunking', 'annotate', 'stability', 'final_labels',
+    'validation', 'reporting',
+    # Extended publication analyses
+    'cross_model', 'convergence', 'significance', 'errors',
+    'discriminant', 'stratified', 'qualitative',
+]
 
 
 def run_schema():
@@ -77,15 +83,20 @@ def run_annotation(name: str, description: str, chunk_limit: int,
 
     pipeline = AnnotationPipeline()
     try:
-        # Check which models are available
-        available = pipeline.ollama.check_models_available()
-        missing = [k for k, v in available.items() if not v and k in models]
+        # Check which models are available across all backends
+        available = pipeline.check_all_models_available(models)
+        missing = [k for k, v in available.items() if not v]
         if missing:
-            logger.warning(f"Models not found in Ollama: {missing}")
-            logger.warning("Run 'ollama pull <model>' to download them.")
+            ollama_missing = [m for m in missing if MODELS_TO_TEST[m].get('backend') == 'ollama']
+            cloud_missing = [m for m in missing if m not in ollama_missing]
+            if ollama_missing:
+                logger.warning(f"Models not found in Ollama: {ollama_missing}")
+                logger.warning("Run 'ollama pull <model>' to download them.")
+            if cloud_missing:
+                logger.warning(f"Cloud models not available (check API keys in .env): {cloud_missing}")
             models = [m for m in models if m not in missing]
             if not models:
-                raise RuntimeError("No models available. Pull at least one model first.")
+                raise RuntimeError("No models available. Check Ollama and API keys.")
 
         exp_id = pipeline.create_experiment(
             name=name,
@@ -150,6 +161,76 @@ def run_reporting(experiment_id: int):
         rg.close()
 
 
+def run_cross_model(experiment_id: int):
+    """Cross-model convergent validity analysis."""
+    from cross_model_validity import CrossModelValidator
+    v = CrossModelValidator(experiment_id)
+    try:
+        v.run()
+    finally:
+        v.close()
+
+
+def run_convergence(experiment_id: int):
+    """Run convergence analysis (R=1 vs R=5)."""
+    from run_convergence import RunConvergenceAnalyzer
+    a = RunConvergenceAnalyzer(experiment_id)
+    try:
+        a.run()
+    finally:
+        a.close()
+
+
+def run_significance(experiment_id: int):
+    """Statistical significance tests."""
+    from significance_tests import SignificanceTester
+    t = SignificanceTester(experiment_id)
+    try:
+        t.run()
+    finally:
+        t.close()
+
+
+def run_errors(experiment_id: int):
+    """Error analysis and confusion matrices."""
+    from error_analysis import ErrorAnalyzer
+    a = ErrorAnalyzer(experiment_id)
+    try:
+        a.run()
+    finally:
+        a.close()
+
+
+def run_discriminant(experiment_id: int):
+    """Discriminant validity: construct correlations."""
+    from discriminant_validity import DiscriminantValidator
+    v = DiscriminantValidator(experiment_id)
+    try:
+        v.run()
+    finally:
+        v.close()
+
+
+def run_stratified(experiment_id: int):
+    """Stratified analysis by metadata dimensions."""
+    from stratified_analysis import StratifiedAnalyzer
+    a = StratifiedAnalyzer(experiment_id)
+    try:
+        a.run()
+    finally:
+        a.close()
+
+
+def run_qualitative(experiment_id: int):
+    """Qualitative sample for face validity."""
+    from qualitative_sample import QualitativeSampler
+    s = QualitativeSampler(experiment_id)
+    try:
+        s.run()
+    finally:
+        s.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Multi-Run LLM Annotation Pipeline",
@@ -203,19 +284,19 @@ def main():
 
     try:
         if 'schema' in steps_to_run:
-            logger.info("\n[STEP 1/8] Applying database schema...")
+            logger.info("\n[STEP 1/15] Applying database schema...")
             run_schema()
 
         if 'cohort' in steps_to_run:
-            logger.info("\n[STEP 2/8] Selecting study cohort...")
+            logger.info("\n[STEP 2/15] Selecting study cohort...")
             run_cohort()
 
         if 'chunking' in steps_to_run:
-            logger.info("\n[STEP 3/8] Chunking transcripts...")
+            logger.info("\n[STEP 3/15] Chunking transcripts...")
             run_chunking(args.chunking_method, args.splits)
 
         if 'annotate' in steps_to_run:
-            logger.info("\n[STEP 4/8] Running multi-run annotation...")
+            logger.info("\n[STEP 4/15] Running multi-run annotation...")
             experiment_id = run_annotation(
                 name=args.name,
                 description=args.description,
@@ -232,20 +313,50 @@ def main():
             sys.exit(1)
 
         if 'stability' in steps_to_run:
-            logger.info("\n[STEP 5/8] Computing stability metrics...")
+            logger.info("\n[STEP 5/15] Computing stability metrics...")
             run_stability(experiment_id)
 
         if 'final_labels' in steps_to_run:
-            logger.info("\n[STEP 6/8] Deriving final annotations...")
+            logger.info("\n[STEP 6/15] Deriving final annotations...")
             run_final_labels(experiment_id)
 
         if 'validation' in steps_to_run:
-            logger.info("\n[STEP 7/8] Running validation against narrative_elements...")
+            logger.info("\n[STEP 7/15] Running validation against narrative_elements...")
             run_validation(experiment_id)
 
         if 'reporting' in steps_to_run:
-            logger.info("\n[STEP 8/8] Generating reports...")
+            logger.info("\n[STEP 8/15] Generating reports...")
             run_reporting(experiment_id)
+
+        # ── Extended Publication Analyses ─────────────────────────
+
+        if 'cross_model' in steps_to_run:
+            logger.info("\n[STEP 9/15] Cross-model convergent validity...")
+            run_cross_model(experiment_id)
+
+        if 'convergence' in steps_to_run:
+            logger.info("\n[STEP 10/15] Run convergence analysis (R=1 vs R=5)...")
+            run_convergence(experiment_id)
+
+        if 'significance' in steps_to_run:
+            logger.info("\n[STEP 11/15] Statistical significance tests...")
+            run_significance(experiment_id)
+
+        if 'errors' in steps_to_run:
+            logger.info("\n[STEP 12/15] Error analysis & confusion matrices...")
+            run_errors(experiment_id)
+
+        if 'discriminant' in steps_to_run:
+            logger.info("\n[STEP 13/15] Discriminant validity...")
+            run_discriminant(experiment_id)
+
+        if 'stratified' in steps_to_run:
+            logger.info("\n[STEP 14/15] Stratified analysis...")
+            run_stratified(experiment_id)
+
+        if 'qualitative' in steps_to_run:
+            logger.info("\n[STEP 15/15] Qualitative sample export...")
+            run_qualitative(experiment_id)
 
         logger.info("\n" + "=" * 60)
         logger.info("PIPELINE COMPLETE!")

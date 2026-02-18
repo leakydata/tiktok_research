@@ -40,7 +40,7 @@ def select_cohort(min_videos: int = 5, min_days_span: int = 180, max_creators: i
         COUNT(DISTINCT t.id) AS transcript_count,
         MIN(v.upload_date) AS first_video_date,
         MAX(v.upload_date) AS last_video_date,
-        EXTRACT(DAY FROM MAX(v.upload_date) - MIN(v.upload_date))::INTEGER AS days_span,
+        (MAX(v.upload_date) - MIN(v.upload_date))::INTEGER AS days_span,
         ARRAY_AGG(DISTINCT cd.condition_code)
             FILTER (WHERE cd.condition_code IS NOT NULL) AS diagnoses_claimed,
         MODE() WITHIN GROUP (ORDER BY cd.condition_code) AS primary_diagnosis
@@ -49,9 +49,11 @@ def select_cohort(min_videos: int = 5, min_days_span: int = 180, max_creators: i
     LEFT JOIN claimed_diagnoses cd ON cd.video_id = v.id
     WHERE t.text IS NOT NULL
       AND LENGTH(t.text) > 100
+      AND t.song_lyrics_ratio IS NOT NULL
+      AND t.song_lyrics_ratio <= 0.2
     GROUP BY v.author
     HAVING COUNT(DISTINCT v.id) >= %s
-       AND EXTRACT(DAY FROM MAX(v.upload_date) - MIN(v.upload_date)) >= %s
+       AND (MAX(v.upload_date) - MIN(v.upload_date))::INTEGER >= %s
     ORDER BY COUNT(DISTINCT v.id) DESC, days_span DESC
     LIMIT %s;
     """

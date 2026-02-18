@@ -19,6 +19,144 @@ from config import DB_CONFIG, STABILITY_THRESHOLDS, LABEL_VOCABULARIES
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+N_BOOTSTRAP = 1000
+BOOTSTRAP_CI = 0.95
+
+
+# ── Bootstrap Confidence Intervals ────────────────────────────────────────
+
+def bootstrap_ci(
+    statistic_func,
+    data,
+    n_bootstrap: int = N_BOOTSTRAP,
+    ci: float = BOOTSTRAP_CI,
+    seed: int = 42,
+) -> tuple[float, float, float]:
+    """Generic bootstrap CI for any statistic computed over a list of items.
+
+    Args:
+        statistic_func: Function that takes a list of items and returns a float.
+        data: List of items to resample from.
+        n_bootstrap: Number of bootstrap resamples.
+        ci: Confidence level (e.g. 0.95).
+        seed: Random seed for reproducibility.
+
+    Returns:
+        (point_estimate, ci_lower, ci_upper)
+    """
+    rng = np.random.default_rng(seed)
+    n = len(data)
+    if n == 0:
+        return (0.0, 0.0, 0.0)
+
+    point = statistic_func(data)
+    boot_stats = []
+    for _ in range(n_bootstrap):
+        indices = rng.integers(0, n, size=n)
+        sample = [data[i] for i in indices]
+        boot_stats.append(statistic_func(sample))
+
+    boot_stats = np.array(boot_stats)
+    alpha = 1.0 - ci
+    lo = float(np.percentile(boot_stats, 100 * alpha / 2))
+    hi = float(np.percentile(boot_stats, 100 * (1 - alpha / 2)))
+    return (round(point, 4), round(lo, 4), round(hi, 4))
+
+
+def bootstrap_krippendorff_nominal(
+    reliability_data: list[list[Optional[str]]],
+    n_bootstrap: int = N_BOOTSTRAP,
+    ci: float = BOOTSTRAP_CI,
+) -> tuple[float, float, float]:
+    """Bootstrap CI for Krippendorff alpha (nominal). Resamples items (chunks)."""
+    def stat(items):
+        return krippendorff_alpha_nominal(items)
+    return bootstrap_ci(stat, reliability_data, n_bootstrap, ci)
+
+
+def bootstrap_krippendorff_interval(
+    reliability_data: list[list[Optional[float]]],
+    n_bootstrap: int = N_BOOTSTRAP,
+    ci: float = BOOTSTRAP_CI,
+) -> tuple[float, float, float]:
+    """Bootstrap CI for Krippendorff alpha (interval). Resamples items (chunks)."""
+    def stat(items):
+        return krippendorff_alpha_interval(items)
+    return bootstrap_ci(stat, reliability_data, n_bootstrap, ci)
+
+
+def bootstrap_stability_rate(
+    is_stable_flags: list[bool],
+    n_bootstrap: int = N_BOOTSTRAP,
+    ci: float = BOOTSTRAP_CI,
+) -> tuple[float, float, float]:
+    """Bootstrap CI for stability rate (fraction of stable chunks)."""
+    def stat(flags):
+        return sum(flags) / len(flags) if flags else 0.0
+    return bootstrap_ci(stat, is_stable_flags, n_bootstrap, ci)
+
+
+def fleiss_kappa(reliability_data: list[list[Optional[str]]]) -> float:
+    """Compute Fleiss' kappa for multiple raters, multiple categories.
+
+    Args:
+        reliability_data: List of items, each a list of rater labels. None = missing.
+
+    Returns:
+        Kappa coefficient.
+    """
+    # Collect categories
+    categories = set()
+    for item_labels in reliability_data:
+        for label in item_labels:
+            if label is not None:
+                categories.add(label)
+    if not categories:
+        return 0.0
+    cat_list = sorted(categories)
+    cat_to_idx = {c: i for i, c in enumerate(cat_list)}
+    k = len(cat_list)
+
+    # Build rating matrix: items x categories (count of raters per category)
+    n_items = 0
+    matrix_rows = []
+    for item_labels in reliability_data:
+        valid = [l for l in item_labels if l is not None]
+        if len(valid) < 2:
+            continue
+        row = [0] * k
+        for label in valid:
+            row[cat_to_idx[label]] += 1
+        matrix_rows.append(row)
+        n_items += 1
+
+    if n_items == 0:
+        return 0.0
+
+    matrix = np.array(matrix_rows, dtype=float)
+    n_raters_per_item = matrix.sum(axis=1)
+    n = float(n_raters_per_item[0])  # Assumes constant raters per item for Fleiss
+
+    # If variable number of raters, use average
+    if not np.all(n_raters_per_item == n):
+        n = float(np.mean(n_raters_per_item))
+
+    N = n_items
+
+    # Proportion of assignments to each category
+    p_j = matrix.sum(axis=0) / (N * n)
+
+    # Per-item agreement
+    P_i = (np.sum(matrix ** 2, axis=1) - n) / (n * (n - 1))
+
+    P_bar = float(np.mean(P_i))
+    P_e = float(np.sum(p_j ** 2))
+
+    if P_e >= 1.0:
+        return 1.0
+
+    return round((P_bar - P_e) / (1.0 - P_e), 4)
+
 
 # ── Per-Chunk Stability Metrics ───────────────────────────────────────────
 
@@ -385,7 +523,7 @@ class StabilityAnalyzer:
                             item_vals.append(None)
                     reliability_data.append(item_vals)
 
-                alpha = krippendorff_alpha_interval(reliability_data)
+                alpha, alpha_ci_lo, alpha_ci_hi = bootstrap_krippendorff_interval(reliability_data)
                 icc = alpha  # Krippendorff alpha interval approximates ICC
 
                 # Also compute mean within-chunk stdev
@@ -404,7 +542,9 @@ class StabilityAnalyzer:
                 mean_range_val = float(np.mean(ranges)) if ranges else None
 
                 group_metrics = {
-                    'krippendorff_alpha': round(alpha, 4),
+                    'krippendorff_alpha': alpha,
+                    'alpha_ci_lower': alpha_ci_lo,
+                    'alpha_ci_upper': alpha_ci_hi,
                     'fleiss_kappa': None,
                     'icc_value': round(icc, 4),
                     'mean_stdev': round(mean_stdev, 4) if mean_stdev is not None else None,
@@ -424,11 +564,14 @@ class StabilityAnalyzer:
                             item_labels.append(None)
                     reliability_data.append(item_labels)
 
-                alpha = krippendorff_alpha_nominal(reliability_data)
+                alpha, alpha_ci_lo, alpha_ci_hi = bootstrap_krippendorff_nominal(reliability_data)
+                fk = fleiss_kappa(reliability_data)
 
                 group_metrics = {
-                    'krippendorff_alpha': round(alpha, 4),
-                    'fleiss_kappa': round(alpha, 4),  # For nominal, alpha ~ kappa
+                    'krippendorff_alpha': alpha,
+                    'alpha_ci_lower': alpha_ci_lo,
+                    'alpha_ci_upper': alpha_ci_hi,
+                    'fleiss_kappa': fk,
                     'icc_value': None,
                     'mean_stdev': None,
                     'mean_range': None,
@@ -458,21 +601,40 @@ class StabilityAnalyzer:
             avg_none = summary['avg_none_rate'] or 0
             avg_unclear = summary['avg_unclear_rate'] or 0
 
+            # Bootstrap CI for stability rate
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT is_stable FROM annotation_stability_metrics
+                    WHERE experiment_id = %s AND construct_name = %s
+                      AND model_name = %s AND temperature = %s AND prompt_format = %s
+                """, (experiment_id, construct, cond['model_name'],
+                      cond['temperature'], cond['prompt_format']))
+                stable_flags = [row['is_stable'] for row in cur.fetchall()]
+
+            stab_rate, stab_ci_lo, stab_ci_hi = bootstrap_stability_rate(stable_flags)
+
             with self.conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO group_reliability_metrics (
                         experiment_id, construct_name, model_name, temperature, prompt_format,
                         num_chunks, num_stable_chunks,
                         coverage_rate, clarity_rate,
-                        krippendorff_alpha, fleiss_kappa,
+                        krippendorff_alpha, alpha_ci_lower, alpha_ci_upper,
+                        fleiss_kappa,
                         icc_value, mean_stdev, mean_range,
-                        stability_rate, mean_agreement
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        stability_rate, stability_ci_lower, stability_ci_upper,
+                        mean_agreement
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (experiment_id, construct_name, model_name, temperature, prompt_format)
                     DO UPDATE SET
                         num_chunks = EXCLUDED.num_chunks,
                         krippendorff_alpha = EXCLUDED.krippendorff_alpha,
+                        alpha_ci_lower = EXCLUDED.alpha_ci_lower,
+                        alpha_ci_upper = EXCLUDED.alpha_ci_upper,
+                        fleiss_kappa = EXCLUDED.fleiss_kappa,
                         stability_rate = EXCLUDED.stability_rate,
+                        stability_ci_lower = EXCLUDED.stability_ci_lower,
+                        stability_ci_upper = EXCLUDED.stability_ci_upper,
                         computed_at = NOW()
                 """, (
                     experiment_id, construct, cond['model_name'],
@@ -481,19 +643,23 @@ class StabilityAnalyzer:
                     round(1.0 - avg_none, 4),
                     round(1.0 - avg_unclear, 4) if avg_none < 1.0 else None,
                     group_metrics['krippendorff_alpha'],
+                    group_metrics['alpha_ci_lower'],
+                    group_metrics['alpha_ci_upper'],
                     group_metrics['fleiss_kappa'],
                     group_metrics['icc_value'],
                     group_metrics['mean_stdev'],
                     group_metrics['mean_range'],
-                    round(num_stable / num_chunks, 4) if num_chunks else 0,
+                    stab_rate, stab_ci_lo, stab_ci_hi,
                     round(float(summary['avg_agreement']), 4) if summary['avg_agreement'] else None,
                 ))
                 self.conn.commit()
 
             logger.info(
                 f"  {construct} | {cond['model_name']} | T={cond['temperature']}: "
-                f"alpha={group_metrics['krippendorff_alpha']}, "
-                f"stable={num_stable}/{num_chunks}"
+                f"alpha={group_metrics['krippendorff_alpha']} "
+                f"[{group_metrics['alpha_ci_lower']}, {group_metrics['alpha_ci_upper']}], "
+                f"stable={num_stable}/{num_chunks} ({stab_rate}) "
+                f"[{stab_ci_lo}, {stab_ci_hi}]"
             )
 
     def run(self, experiment_id: int):

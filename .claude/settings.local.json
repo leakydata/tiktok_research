@@ -3,7 +3,29 @@
     "allow": [
       "Bash(wc -l:*)",
       "Bash(python -m pytest:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(conda run -n tiktok-research python -c:*)",
+      "Bash(where:*)",
+      "Read(//c/Users/schol/**)",
+      "Bash(\"C:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -c:*)",
+      "Bash(\"C:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -c \"\nimport psycopg2\nfrom config import DB_CONFIG\nconn = psycopg2.connect\\(**DB_CONFIG\\)\ncur = conn.cursor\\(\\)\n\ncur.execute\\(''SELECT experiment_id, experiment_name, status, num_chunks_tested FROM experiment_runs ORDER BY experiment_id''\\)\nprint\\(''=== EXPERIMENTS ===''\\)\nfor row in cur.fetchall\\(\\):\n    print\\(f''  exp {row[0]}: {row[1]} status={row[2]} chunks={row[3]}''\\)\n\ncur.execute\\(\"\"\"\"\"\"\n    SELECT experiment_id, model_name, label_kind, COUNT\\(*\\),\n           AVG\\(CASE WHEN raw_response = '''' THEN 1 ELSE 0 END\\)::numeric AS empty_rate\n    FROM llm_annotation_runs\n    GROUP BY experiment_id, model_name, label_kind\n    ORDER BY experiment_id, model_name\n\"\"\"\"\"\"\\)\nprint\\(\\)\nprint\\(''=== RESPONSE QUALITY BY MODEL ===''\\)\nfor row in cur.fetchall\\(\\):\n    print\\(f''  exp={row[0]} model={row[1]} kind={row[2]} count={row[3]} empty={row[4]:.2f}''\\)\n\ncur.execute\\(\"\"\"\"\"\"\n    SELECT model_name, construct_name, label_kind, raw_response\n    FROM llm_annotation_runs\n    WHERE LENGTH\\(raw_response\\) > 0\n    ORDER BY experiment_id DESC\n    LIMIT 10\n\"\"\"\"\"\"\\)\nrows = cur.fetchall\\(\\)\nprint\\(\\)\nprint\\(f''=== NON-EMPTY RESPONSES \\({len\\(rows\\)} found\\) ===''\\)\nfor row in rows:\n    print\\(f''  [{row[0]}] {row[1]} kind={row[2]}''\\)\n    print\\(f''    RAW: {repr\\(row[3][:300]\\)}''\\)\n    print\\(\\)\n\nconn.close\\(\\)\n\")",
+      "Bash(\"C:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\":*)",
+      "Bash(cd:*)",
+      "Bash(\"C:\\\\Python313\\\\python.exe\" -m pip:*)",
+      "Bash(findstr:*)",
+      "Bash(C:Python313python.exe -c \"import psycopg2; print\\(''ok''\\)\")",
+      "Bash(C:Usersscholminiconda3envstiktok-researchpython.exe -c \"import psycopg2; print\\(''ok''\\)\")",
+      "Bash(dir:*)",
+      "Bash(cmd /c \"C:\\\\Python313\\\\python.exe -c \"\"import psycopg2; print\\(''ok''\\)\"\"\")",
+      "Bash(\"c:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -m pytest tests/ -v)",
+      "Bash(\"c:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -m pytest tests/test_parsing.py tests/test_clients.py -v)",
+      "WebFetch(domain:platform.minimax.io)",
+      "WebFetch(domain:platform.openai.com)",
+      "Bash(\"c:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -c \"import openai; print\\(f''openai {openai.__version__}''\\)\")",
+      "Bash(\"c:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -m pytest \"c:\\\\Users\\\\schol\\\\Documents\\\\Python Projects\\\\tiktok_research\\\\tests\\\\test_clients.py\" -v)",
+      "Bash(\"c:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -c:*)",
+      "Bash(\"c:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\":*)",
+      "Bash(\"c:\\\\Users\\\\schol\\\\anaconda3\\\\envs\\\\tiktok-research\\\\python.exe\" -c \"\nimport psycopg2\nfrom config import DB_CONFIG\nconn = psycopg2.connect\\(**DB_CONFIG\\)\ncur = conn.cursor\\(\\)\n\ncur.execute\\(\"\"\"\"\"\"\n    UPDATE annotation_tasks\n    SET status = ''pending'', retries = 0, last_error = NULL\n    WHERE experiment_id = 14\n      AND model_name = ''gpt-5-nano''\n      AND status IN \\(''failed'', ''running''\\)\n\"\"\"\"\"\"\\)\nprint\\(f''Reset {cur.rowcount} gpt-5-nano tasks back to pending''\\)\nconn.commit\\(\\)\n\n# Verify\ncur.execute\\(\"\"\"\"\"\"\n    SELECT model_name, status, COUNT\\(*\\) \n    FROM annotation_tasks WHERE experiment_id = 14\n    GROUP BY model_name, status ORDER BY model_name, status\n\"\"\"\"\"\"\\)\nfor row in cur.fetchall\\(\\):\n    print\\(f''  {row[0]:<20s} | {row[1]:<12s} | {row[2]:>6,}''\\)\nconn.close\\(\\)\n\")"
     ]
   }
 }

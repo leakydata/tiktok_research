@@ -7,12 +7,13 @@ import time
 import logging
 from typing import Optional
 
-from config import OLLAMA_BASE_URL, MODELS_TO_TEST
+from config import OLLAMA_BASE_URL, MODELS_TO_TEST, MAX_NUM_CTX
+from llm_client import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaClient:
+class OllamaClient(BaseLLMClient):
     """Client for local Ollama inference with full parameter tracking."""
 
     def __init__(self, base_url: str = OLLAMA_BASE_URL):
@@ -45,9 +46,13 @@ class OllamaClient:
         model_cfg = MODELS_TO_TEST[model_key]
         ollama_name = model_cfg['ollama_name']
 
+        # Cap num_ctx to avoid wasting GPU memory on unused context window
+        num_ctx = min(model_cfg.get('context_length', 4096), MAX_NUM_CTX)
+
         options = {
             'temperature': temperature,
             'num_predict': max_tokens,
+            'num_ctx': num_ctx,
             'top_p': top_p,
             'top_k': top_k,
             'repeat_penalty': repeat_penalty,
@@ -62,7 +67,9 @@ class OllamaClient:
 
         payload = {
             'model': ollama_name,
-            'prompt': prompt,
+            'messages': [
+                {'role': 'user', 'content': prompt},
+            ],
             'stream': False,
             'options': options,
         }
@@ -70,13 +77,21 @@ class OllamaClient:
         start = time.time()
         try:
             resp = requests.post(
-                f"{self.base_url}/api/generate",
+                f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=180,
+                timeout=600,
             )
             resp.raise_for_status()
             result = resp.json()
             elapsed_ms = int((time.time() - start) * 1000)
+
+            # Extract response text from chat format
+            response_text = ''
+            msg = result.get('message', {})
+            if isinstance(msg, dict):
+                response_text = msg.get('content', '')
+            elif isinstance(result.get('response'), str):
+                response_text = result['response']
 
             # Build the full inference params dict for DB storage
             inference_params = {
@@ -87,11 +102,11 @@ class OllamaClient:
                 'num_predict': max_tokens,
                 'seed': options.get('seed'),
                 'stop': stop_sequences,
-                'num_ctx': model_cfg.get('context_length'),
+                'num_ctx': num_ctx,
             }
 
             return {
-                'response': result.get('response', '').strip(),
+                'response': response_text.strip(),
                 'tokens_generated': result.get('eval_count', 0),
                 'processing_time_ms': elapsed_ms,
                 'model_key': model_key,
@@ -117,12 +132,25 @@ class OllamaClient:
             raise
 
     def ensure_model_loaded(self, model_key: str):
-        """Pre-load a model into GPU memory by running a trivial prompt."""
+        """Pre-load a model into GPU memory using keep_alive (no inference needed)."""
         if model_key not in MODELS_TO_TEST:
             raise ValueError(f"Unknown model key: {model_key}")
-        logger.info(f"Loading model: {model_key} ({MODELS_TO_TEST[model_key]['ollama_name']})")
-        self.generate(model_key, "Hello", temperature=0.0, max_tokens=1)
-        logger.info(f"Model {model_key} loaded successfully")
+        ollama_name = MODELS_TO_TEST[model_key]['ollama_name']
+        logger.info(f"Loading model: {model_key} ({ollama_name})")
+        try:
+            # Use /api/chat with empty messages and keep_alive to load without inference
+            resp = requests.post(
+                f"{self.base_url}/api/chat",
+                json={'model': ollama_name, 'messages': [], 'keep_alive': '30m'},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            logger.info(f"Model {model_key} loaded successfully")
+        except Exception:
+            # Fallback: run a minimal generation if keep_alive-only doesn't work
+            logger.debug(f"keep_alive load failed, falling back to minimal generate")
+            self.generate(model_key, "hi", temperature=0.0, max_tokens=1)
+            logger.info(f"Model {model_key} loaded successfully (via fallback)")
 
     def list_available_models(self) -> list[str]:
         """List models currently available in Ollama."""
@@ -140,7 +168,8 @@ class OllamaClient:
         available = self.list_available_models()
         results = {}
         for key, cfg in MODELS_TO_TEST.items():
-            # Check if the ollama name (or a prefix of it) is in available models
+            if cfg.get('backend', 'ollama') != 'ollama':
+                continue
             ollama_name = cfg['ollama_name']
             found = any(
                 ollama_name in m or m.startswith(ollama_name.split(':')[0])

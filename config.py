@@ -20,33 +20,110 @@ DB_CONFIG = {
 # Ollama configuration
 OLLAMA_BASE_URL = os.getenv('OLLAMA_URL', 'http://localhost:11434')
 
-# Models to test - maps short name to Ollama model identifier
+# Cloud API keys (set in .env when needed)
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY', '')
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
+MINIMAX_API_KEY = os.getenv('MINIMAX_API_KEY', '')
+
+# Backend connection configs
+BACKEND_CONFIGS = {
+    'ollama': {
+        'base_url': OLLAMA_BASE_URL,
+    },
+    'openai': {
+        'api_key': OPENAI_API_KEY,
+        'base_url': 'https://api.openai.com/v1',
+    },
+    'anthropic': {
+        'api_key': ANTHROPIC_API_KEY,
+    },
+    'deepseek': {
+        'api_key': DEEPSEEK_API_KEY,
+        'base_url': 'https://api.deepseek.com/v1',
+    },
+    'minimax': {
+        'api_key': MINIMAX_API_KEY,
+        'base_url': 'https://api.minimax.io/v1',
+    },
+}
+
+# ── Local Ollama models ──────────────────────────────────────────────────
+# Ordered smallest to largest for faster initial results.
+# All models run locally so token limits are generous (models stop at EOS naturally).
 MODELS_TO_TEST = {
-    'glm4-flash': {
-        'ollama_name': 'glm-4-flash',
+    'glm-4.7-flash': {
+        'backend': 'ollama',
+        'ollama_name': 'glm-4.7-flash',
         'family': 'glm',
         'size_b': 4.7,
         'context_length': 8192,
     },
-    'medgemma-27b': {
-        'ollama_name': 'alibayram/medgemma:27b',
-        'family': 'gemma',
-        'size_b': 27.0,
-        'context_length': 8192,
+    'phi4:latest': {
+        'backend': 'ollama',
+        'ollama_name': 'phi4:latest',
+        'family': 'phi',
+        'size_b': 14.0,
+        'context_length': 16384,
     },
-    'gpt-oss-20b': {
+    'gpt-oss:20b': {
+        'backend': 'ollama',
         'ollama_name': 'gpt-oss:20b',
         'family': 'gpt',
         'size_b': 20.0,
         'context_length': 8192,
     },
-    'qwen3-32b': {
-        'ollama_name': 'qwen3:32b',
-        'family': 'qwen',
-        'size_b': 32.0,
-        'context_length': 32768,
+    'alibayram/medgemma:27b': {
+        'backend': 'ollama',
+        'ollama_name': 'alibayram/medgemma:27b',
+        'family': 'gemma',
+        'size_b': 27.0,
+        'context_length': 8192,
+    },
+    'gemma3:27b': {
+        'backend': 'ollama',
+        'ollama_name': 'gemma3:27b',
+        'family': 'gemma',
+        'size_b': 27.0,
+        'context_length': 8192,
+    },
+
+    # ── Cloud foundational models ────────────────────────────────────────────
+    # Set API keys in .env to enable. These are only used when explicitly
+    # passed via --models; they won't run in Ollama-only experiments.
+    'deepseek-chat': {
+        'backend': 'deepseek',
+        'api_model_name': 'deepseek-chat',       # DeepSeek-V3.2
+        'family': 'deepseek',
+        'size_b': 671.0,                          # 671B total, 37B active (MoE)
+        'context_length': 128000,
+    },
+    'minimax-m2.5': {
+        'backend': 'minimax',
+        'api_model_name': 'MiniMax-M2.5',
+        'family': 'minimax',
+        'size_b': 0.0,                            # undisclosed
+        'context_length': 204800,
+    },
+    'gpt-5-nano': {
+        'backend': 'openai',
+        'api_model_name': 'gpt-5-nano',
+        'family': 'gpt',
+        'size_b': 0.0,                            # undisclosed
+        'context_length': 400000,
+        'fixed_temperature': True,                 # API rejects custom temperature values
     },
 }
+
+# Maximum context window to allocate in Ollama.
+# Set high enough for the full model context; Ollama handles memory internally.
+MAX_NUM_CTX = 32768
+
+# Default max tokens for generation.
+# Models like deepseek-r1 and qwen3 output <think>...</think> reasoning blocks
+# before the answer, which can use hundreds of tokens. Set generous to avoid
+# truncating model output — models stop at EOS naturally.
+DEFAULT_MAX_TOKENS = 4096
 
 # Experimental parameters
 NUM_RUNS = 5
@@ -113,7 +190,7 @@ DEFAULT_CHUNKING_METHOD = 'multi_sentence'
 
 # Batch sizes
 CHUNKING_BATCH_SIZE = 500
-ANNOTATION_BATCH_SIZE = 20
+ANNOTATION_BATCH_SIZE = 100  # Larger batches reduce DB overhead and progress-check frequency
 
 # Task queue
 MAX_RETRIES = 3

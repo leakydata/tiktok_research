@@ -262,6 +262,12 @@ CREATE TABLE IF NOT EXISTS group_reliability_metrics (
     mean_stdev FLOAT,        -- average within-chunk stdev
     mean_range FLOAT,
 
+    -- Bootstrap confidence intervals
+    alpha_ci_lower FLOAT,
+    alpha_ci_upper FLOAT,
+    stability_ci_lower FLOAT,
+    stability_ci_upper FLOAT,
+
     -- Stability summary
     stability_rate FLOAT,    -- fraction of chunks that are stable
     mean_agreement FLOAT,

@@ -232,6 +232,52 @@ class TestEdgeCases:
         assert result['label_kind'] == 'float'
         assert result['label_value_float'] == 0.8
 
+    def test_label_then_explanation_present(self):
+        """Model says 'present' but explanation mentions 'past' — must parse as present."""
+        raw = "present  The statement primarily uses present tense verbs to describe the speaker's current health rather than past events"
+        result = normalize_label(raw, "temporal_orientation")
+        assert result['label_kind'] == 'category'
+        assert result['label_value_text'] == 'present'
+
+    def test_label_then_explanation_past(self):
+        raw = "past  The speaker reflects on previous symptoms and historical diagnosis"
+        result = normalize_label(raw, "temporal_orientation")
+        assert result['label_kind'] == 'category'
+        assert result['label_value_text'] == 'past'
+
+    def test_label_then_explanation_active(self):
+        raw = "active  The speaker demonstrates control over their treatment decisions, not passive or helpless"
+        result = normalize_label(raw, "agency_control")
+        assert result['label_kind'] == 'category'
+        assert result['label_value_text'] == 'active'
+
+    def test_label_then_explanation_absent(self):
+        raw = "absent  No social proof elements are present in this text"
+        result = normalize_label(raw, "social_proof")
+        assert result['label_kind'] == 'category'
+        assert result['label_value_text'] == 'absent'
+
+    def test_not_present_social_proof(self):
+        """'not present' should map to absent, not present."""
+        raw = "not present  The text does not reference other people's experiences"
+        result = normalize_label(raw, "social_proof")
+        assert result['label_kind'] == 'category'
+        assert result['label_value_text'] == 'absent'
+
+    def test_earliest_occurrence_wins(self):
+        """When explanation precedes the label, earliest match should win."""
+        raw = "The orientation is present with some future references"
+        result = normalize_label(raw, "temporal_orientation")
+        assert result['label_kind'] == 'category'
+        assert result['label_value_text'] == 'present'
+
+    def test_synonym_first_token(self):
+        """Synonym as the first word should be recognized."""
+        raw = "current  The speaker uses present-tense language throughout"
+        result = normalize_label(raw, "temporal_orientation")
+        assert result['label_kind'] == 'category'
+        assert result['label_value_text'] == 'present'
+
 
 if __name__ == "__main__":
     import pytest

@@ -18,8 +18,8 @@ from config import (
     CONSTRUCTS, LABEL_VOCABULARIES, ANNOTATION_BATCH_SIZE,
     MAX_RETRIES, RETRY_BACKOFF_SECONDS, CHUNKING_CONFIGS,
     DEFAULT_CHUNKING_METHOD, DEFAULT_STABILITY_THRESHOLD,
+    DEFAULT_MAX_TOKENS, BACKEND_CONFIGS,
 )
-from ollama_client import OllamaClient
 from prompts import HealthLanguagePrompts
 from label_parsing import normalize_label
 
@@ -32,7 +32,47 @@ logger = logging.getLogger(__name__)
 class AnnotationPipeline:
     def __init__(self):
         self.conn = psycopg2.connect(**DB_CONFIG)
-        self.ollama = OllamaClient()
+        self._clients = {}  # backend_name -> client instance (lazy)
+
+    def _get_client(self, model_key: str):
+        """Get or create the client for a model's backend."""
+        model_cfg = MODELS_TO_TEST[model_key]
+        backend = model_cfg.get('backend', 'ollama')
+
+        if backend not in self._clients:
+            if backend == 'ollama':
+                from ollama_client import OllamaClient
+                cfg = BACKEND_CONFIGS['ollama']
+                self._clients[backend] = OllamaClient(base_url=cfg['base_url'])
+            elif backend in ('openai', 'deepseek', 'minimax'):
+                from llm_client import OpenAICompatibleClient
+                cfg = BACKEND_CONFIGS[backend]
+                self._clients[backend] = OpenAICompatibleClient(
+                    api_key=cfg['api_key'],
+                    base_url=cfg['base_url'],
+                    backend_name=backend,
+                )
+            elif backend == 'anthropic':
+                from llm_client import AnthropicClient
+                cfg = BACKEND_CONFIGS[backend]
+                self._clients[backend] = AnthropicClient(api_key=cfg['api_key'])
+            else:
+                raise ValueError(f"Unknown backend: {backend}")
+
+        return self._clients[backend]
+
+    def check_all_models_available(self, models: list[str] = None) -> dict[str, bool]:
+        """Check availability across all backends for the given models."""
+        models = models or list(MODELS_TO_TEST.keys())
+        results = {}
+        for model_key in models:
+            try:
+                client = self._get_client(model_key)
+                avail = client.check_models_available()
+                results[model_key] = avail.get(model_key, True)
+            except Exception:
+                results[model_key] = False
+        return results
 
     def create_experiment(
         self,
@@ -119,10 +159,10 @@ class AnnotationPipeline:
         total_tasks = len(chunk_ids) * len(models) * len(CONSTRUCTS) * len(temperatures) * num_runs
         logger.info(f"Total tasks: {total_tasks:,}")
 
-        # Batch insert tasks
+        # Batch insert tasks — models outer loop (smallest first) for faster initial results
         task_rows = []
-        for chunk_id in chunk_ids:
-            for model in models:
+        for model in models:
+            for chunk_id in chunk_ids:
                 for construct in CONSTRUCTS:
                     for temp in temperatures:
                         for run_num in range(1, num_runs + 1):
@@ -131,9 +171,9 @@ class AnnotationPipeline:
                                 temp, 'single_label', run_num,
                             ))
 
-            if len(task_rows) >= 5000:
-                self._insert_tasks(task_rows)
-                task_rows = []
+                if len(task_rows) >= 5000:
+                    self._insert_tasks(task_rows)
+                    task_rows = []
 
         if task_rows:
             self._insert_tasks(task_rows)
@@ -161,8 +201,24 @@ class AnnotationPipeline:
             execute_values(cur, query, rows)
             self.conn.commit()
 
+    def reset_stale_tasks(self, experiment_id: int) -> int:
+        """Reset tasks stuck in 'running' state (from a crashed run) back to 'pending'."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                UPDATE annotation_tasks
+                SET status = 'pending', started_at = NULL
+                WHERE experiment_id = %s AND status = 'running'
+            """, (experiment_id,))
+            count = cur.rowcount
+            self.conn.commit()
+        if count:
+            logger.info(f"Reset {count} stale 'running' tasks back to 'pending'")
+        return count
+
     def run_tasks(self, experiment_id: int, batch_size: int = ANNOTATION_BATCH_SIZE):
         """Process pending tasks from the queue."""
+        current_model = None  # Track across batches to avoid redundant reloads
+
         while True:
             # Fetch a batch of pending tasks
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -175,7 +231,7 @@ class AnnotationPipeline:
                     INNER JOIN annotation_chunks ac ON t.chunk_id = ac.chunk_id
                     WHERE t.experiment_id = %s
                       AND t.status = 'pending'
-                    ORDER BY t.model_name, t.chunk_id, t.construct_name, t.run_number
+                    ORDER BY t.task_id
                     LIMIT %s
                 """, (experiment_id, batch_size))
                 tasks = cur.fetchall()
@@ -183,19 +239,26 @@ class AnnotationPipeline:
             if not tasks:
                 break
 
-            # Group by model to minimize model swaps
-            current_model = None
+            # Mark entire batch as running in one UPDATE
+            task_ids = [t['task_id'] for t in tasks]
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE annotation_tasks SET status = 'running', started_at = NOW() "
+                    "WHERE task_id = ANY(%s)", (task_ids,)
+                )
+                self.conn.commit()
+
             results = []
+            completed_ids = []
+            failed_ids = []
 
             for task in tasks:
-                # Mark as running
-                self._update_task_status(task['task_id'], 'running')
-
                 # Load model if changed
                 if task['model_name'] != current_model:
                     current_model = task['model_name']
                     try:
-                        self.ollama.ensure_model_loaded(current_model)
+                        client = self._get_client(current_model)
+                        client.ensure_model_loaded(current_model)
                     except Exception as e:
                         logger.error(f"Failed to load model {current_model}: {e}")
                         self._fail_task(task['task_id'], str(e))
@@ -206,16 +269,23 @@ class AnnotationPipeline:
                     result = self._annotate_single(task, experiment_id)
                     if result:
                         results.append(result)
-                        self._update_task_status(task['task_id'], 'completed')
+                        completed_ids.append(task['task_id'])
                     else:
                         self._fail_task(task['task_id'], "No result returned")
                 except Exception as e:
                     logger.error(f"Task {task['task_id']} failed: {e}")
                     self._retry_or_fail(task['task_id'], str(e))
 
-            # Batch insert results
+            # Batch insert results + batch mark completed (one commit)
             if results:
                 self._insert_results(results)
+            if completed_ids:
+                with self.conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE annotation_tasks SET status = 'completed', completed_at = NOW() "
+                        "WHERE task_id = ANY(%s)", (completed_ids,)
+                    )
+                    self.conn.commit()
 
             # Progress report
             self._log_progress(experiment_id)
@@ -239,11 +309,12 @@ class AnnotationPipeline:
             context_carry=task.get('context_carry_text'),
         )
 
-        result = self.ollama.generate(
+        client = self._get_client(task['model_name'])
+        result = client.generate(
             model_key=task['model_name'],
             prompt=prompt,
             temperature=task['temperature'],
-            max_tokens=50,
+            max_tokens=DEFAULT_MAX_TOKENS,
         )
 
         parsed = normalize_label(result['response'], task['construct_name'])
@@ -358,7 +429,9 @@ class AnnotationPipeline:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run multi-run LLM annotation")
-    parser.add_argument('--name', required=True, help='Experiment name')
+    parser.add_argument('--resume', type=int, metavar='EXPERIMENT_ID',
+                        help='Resume a previous experiment by ID (skips creation)')
+    parser.add_argument('--name', default=None, help='Experiment name (required for new runs)')
     parser.add_argument('--description', default='', help='Experiment description')
     parser.add_argument('--chunk-limit', type=int, default=100, help='Max chunks to annotate')
     parser.add_argument('--models', nargs='+', default=None, help='Model keys to use')
@@ -369,22 +442,30 @@ if __name__ == "__main__":
 
     pipeline = AnnotationPipeline()
     try:
-        exp_id = pipeline.create_experiment(
-            name=args.name,
-            description=args.description,
-            models=args.models,
-            temperatures=args.temperatures,
-            num_runs=args.num_runs,
-            chunk_limit=args.chunk_limit,
-        )
-        pipeline.create_task_queue(
-            experiment_id=exp_id,
-            chunk_limit=args.chunk_limit,
-            models=args.models,
-            temperatures=args.temperatures,
-            num_runs=args.num_runs,
-            splits=args.splits,
-        )
+        if args.resume:
+            exp_id = args.resume
+            logger.info(f"Resuming experiment {exp_id}")
+            pipeline.reset_stale_tasks(exp_id)
+            pipeline._log_progress(exp_id)
+        else:
+            if not args.name:
+                parser.error("--name is required when starting a new experiment")
+            exp_id = pipeline.create_experiment(
+                name=args.name,
+                description=args.description,
+                models=args.models,
+                temperatures=args.temperatures,
+                num_runs=args.num_runs,
+                chunk_limit=args.chunk_limit,
+            )
+            pipeline.create_task_queue(
+                experiment_id=exp_id,
+                chunk_limit=args.chunk_limit,
+                models=args.models,
+                temperatures=args.temperatures,
+                num_runs=args.num_runs,
+                splits=args.splits,
+            )
         pipeline.run_tasks(exp_id)
     finally:
         pipeline.close()

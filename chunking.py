@@ -11,6 +11,8 @@ from psycopg2.extras import execute_values, RealDictCursor
 import re
 import json
 import logging
+import nltk
+from nltk.tokenize import sent_tokenize
 from config import DB_CONFIG, CHUNKING_CONFIGS, DEFAULT_CHUNKING_METHOD, CHUNKING_BATCH_SIZE
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,39 +20,29 @@ logger = logging.getLogger(__name__)
 
 CHUNKING_VERSION = 'v1'
 
-# Regex-based sentence splitter for spoken/transcript text.
-# No NLTK dependency — punkt performs poorly on Whisper-generated TikTok
-# transcripts anyway (inconsistent punctuation, run-on speech, filler words).
-
-# Pattern splits on:
-#   1. Standard sentence endings: .!? followed by space and uppercase or quote
-#   2. Ellipsis followed by space and uppercase
-#   3. Spoken discourse markers followed by uppercase (captures natural pauses)
-
-_SENTENCE_BOUNDARY = re.compile(
-    r'(?<=[.!?])\s+(?=[A-Z"\'])'     # standard: ". The" / "! She" / "? I"
-    r'|(?<=\.\.\.)\s+(?=[A-Z])'      # ellipsis: "... So"
-    r'|(?<=[.!?])\s+(?=\d)'          # sentence ending before number: ". 3 days"
-)
+# Ensure NLTK punkt tokenizer data is available
+try:
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    nltk.download('punkt_tab', quiet=True)
 
 
 def _sentence_split(text: str) -> list[str]:
-    """Split text into sentences using regex. No external data files needed.
-
-    Designed for Whisper-generated spoken transcripts where punctuation is
-    inconsistent. Falls back to discourse-marker splitting for unpunctuated text.
+    """Split text into sentences using NLTK's sent_tokenize.
+SO is this all I need to generate the files
+    Falls back to discourse-marker splitting for unpunctuated text where
+    NLTK returns a single mega-sentence (common in Whisper transcripts).
     """
     text = text.strip()
     if not text:
         return []
 
-    # First try the standard boundary regex
-    parts = _SENTENCE_BOUNDARY.split(text)
+    # Primary: NLTK punkt tokenizer
+    parts = sent_tokenize(text)
     parts = [p.strip() for p in parts if p.strip()]
 
-    # If we got a single mega-chunk (no punctuation at all), try splitting
-    # on spoken discourse markers that signal topic/thought boundaries.
-    # Uses lookahead (not lookbehind) to avoid variable-length lookbehind error.
+    # If NLTK returned a single mega-chunk (no punctuation / run-on speech),
+    # try splitting on spoken discourse markers that signal thought boundaries.
     if len(parts) == 1 and len(text) > 300:
         discourse_parts = re.split(
             r'\s+(?=(?:[Ss]o |[Aa]nd then |[Bb]ut |[Oo]kay so |[Aa]nyway |[Bb]asically ))',
@@ -59,12 +51,10 @@ def _sentence_split(text: str) -> list[str]:
         if len(discourse_parts) > 1:
             parts = [p.strip() for p in discourse_parts if p.strip()]
 
-    # Last resort: if still one giant block, split on any comma/semicolon
-    # followed by a reasonable clause length
+    # Last resort: if still one giant block, split on comma/semicolon
     if len(parts) == 1 and len(text) > 500:
         clause_parts = re.split(r'[,;]\s+', text)
         if len(clause_parts) > 2:
-            # Re-merge very short fragments
             merged = []
             current = clause_parts[0]
             for part in clause_parts[1:]:
@@ -102,7 +92,7 @@ class TranscriptChunker:
             v.author AS creator_username,
             v.upload_date AS video_date,
             sc.first_video_date,
-            EXTRACT(DAY FROM v.upload_date - sc.first_video_date)::INTEGER AS days_since_first,
+            (v.upload_date - sc.first_video_date)::INTEGER AS days_since_first,
             (
                 SELECT ne.content_type
                 FROM narrative_elements ne
@@ -114,6 +104,8 @@ class TranscriptChunker:
         INNER JOIN study_cohort sc ON v.author = sc.creator_username
         WHERE t.text IS NOT NULL
           AND LENGTH(t.text) > 100
+          AND t.song_lyrics_ratio IS NOT NULL
+          AND t.song_lyrics_ratio <= 0.2
           {split_filter}
         ORDER BY v.author, v.upload_date;
         """
@@ -238,13 +230,28 @@ class TranscriptChunker:
             execute_values(cur, query, chunks)
             self.conn.commit()
 
+    def get_already_chunked_transcript_ids(self) -> set[int]:
+        """Return transcript IDs that already have chunks for this method+version."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT transcript_id FROM annotation_chunks
+                WHERE chunking_method = %s AND chunking_version = %s
+            """, (self.method, CHUNKING_VERSION))
+            return {row[0] for row in cur.fetchall()}
+
     def run(self, splits: list[str] = None):
-        """Main execution."""
+        """Main execution. Skips transcripts that are already chunked."""
         logger.info(f"Chunking with method='{self.method}', version='{CHUNKING_VERSION}'")
         logger.info(f"Params: {json.dumps(self.params)}")
 
         transcripts = self.get_cohort_transcripts(splits)
         logger.info(f"Loaded {len(transcripts)} transcripts")
+
+        already_done = self.get_already_chunked_transcript_ids()
+        if already_done:
+            before = len(transcripts)
+            transcripts = [t for t in transcripts if t['transcript_id'] not in already_done]
+            logger.info(f"Skipping {before - len(transcripts)} already-chunked transcripts, {len(transcripts)} remaining")
 
         chunk_func = (
             self.chunk_multi_sentence if self.method == 'multi_sentence'

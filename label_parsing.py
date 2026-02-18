@@ -34,6 +34,55 @@ LABEL_SYNONYMS = {
 }
 
 
+def _strip_reasoning(text: str) -> str:
+    """Remove reasoning/thinking blocks from model output.
+
+    Handles all known reasoning tag formats:
+      - <think>...</think>           (qwen3, deepseek-r1)
+      - <|think|>...<|/think|>       (phi4-reasoning)
+      - <reasoning>...</reasoning>   (generic)
+      - <reflection>...</reflection> (generic)
+    Returns only the final answer portion.
+    """
+    # All known reasoning tag patterns (closed)
+    tag_patterns = [
+        r'<think>.*?</think>',
+        r'<\|think\|>.*?<\|/think\|>',
+        r'<reasoning>.*?</reasoning>',
+        r'<reflection>.*?</reflection>',
+    ]
+    stripped = text
+    for pattern in tag_patterns:
+        stripped = re.sub(pattern, '', stripped, flags=re.DOTALL | re.IGNORECASE)
+
+    # Handle unclosed thinking blocks (model hit token limit mid-thought)
+    unclosed_patterns = [r'<think>', r'<\|think\|>', r'<reasoning>', r'<reflection>']
+    for tag in unclosed_patterns:
+        tag_lower = tag.replace('\\', '').lower()
+        if tag_lower in stripped.lower():
+            parts = re.split(tag, stripped, flags=re.IGNORECASE)
+            before = parts[0].strip()
+            # Everything after the last unclosed tag is likely still reasoning, discard it
+            # Use what came before if it has content
+            stripped = before if before else ''
+
+    # Some models wrap the final answer in **bold** or [brackets]
+    stripped = re.sub(r'\*\*(.*?)\*\*', r'\1', stripped)
+
+    # If still multi-line after stripping, take the last non-empty line
+    # (many models explain first, then put the label on the final line)
+    stripped = stripped.strip()
+    if '\n' in stripped:
+        lines = [ln.strip() for ln in stripped.split('\n') if ln.strip()]
+        if lines:
+            # Check if last line looks like a label (short, no sentences)
+            last = lines[-1]
+            if len(last) < 80:
+                stripped = last
+
+    return stripped.strip()
+
+
 def normalize_label(raw_response: str, construct_name: str) -> dict:
     """Parse and normalize a model response into a structured label.
 
@@ -43,7 +92,8 @@ def normalize_label(raw_response: str, construct_name: str) -> dict:
         label_value_float: float value (or None)
         label_bin: binned category for continuous (or None)
     """
-    cleaned = raw_response.strip().lower()
+    # Strip reasoning blocks first, then clean
+    cleaned = _strip_reasoning(raw_response).lower()
     # Strip surrounding quotes and punctuation
     cleaned = cleaned.strip('"\'`.,;:!? ')
 
@@ -122,47 +172,64 @@ def normalize_label(raw_response: str, construct_name: str) -> dict:
     allowed = vocab['allowed']
     synonyms = LABEL_SYNONYMS.get(construct_name, {})
 
-    # Direct match
+    # Direct match (entire cleaned response is exactly an allowed label)
     if cleaned in allowed:
-        return {
-            'label_kind': 'category',
-            'label_value_text': cleaned,
-            'label_value_float': None,
-            'label_bin': None,
-        }
+        return _make_category(cleaned)
 
-    # Synonym match
+    # Synonym exact match
     for canonical, syns in synonyms.items():
         if cleaned in syns:
-            return {
-                'label_kind': 'category',
-                'label_value_text': canonical,
-                'label_value_float': None,
-                'label_bin': None,
-            }
+            return _make_category(canonical)
 
-    # Substring match (e.g., response is "The temporal orientation is past.")
+    # First-token extraction: models often respond "label  Explanation..."
+    # Check the first 1-3 words against allowed labels and synonyms
+    words = cleaned.split()
+    first_tokens = [
+        words[0] if len(words) >= 1 else '',
+        ' '.join(words[:2]) if len(words) >= 2 else '',
+        ' '.join(words[:3]) if len(words) >= 3 else '',
+    ]
+    for token in first_tokens:
+        if token in allowed:
+            return _make_category(token)
+        for canonical, syns in synonyms.items():
+            if token in syns:
+                return _make_category(canonical)
+
+    # Substring match — prefer the label that appears EARLIEST in the text
+    # (avoids matching labels mentioned in explanation text over the actual answer)
+    best_match = None
+    best_pos = len(cleaned) + 1
     for canonical in allowed:
-        if canonical in cleaned:
-            return {
-                'label_kind': 'category',
-                'label_value_text': canonical,
-                'label_value_float': None,
-                'label_bin': None,
-            }
+        pos = cleaned.find(canonical)
+        if pos != -1 and pos < best_pos:
+            best_match = canonical
+            best_pos = pos
+    if best_match is not None:
+        return _make_category(best_match)
 
-    # Synonym substring match
+    # Synonym substring match — same earliest-occurrence logic
+    best_match = None
+    best_pos = len(cleaned) + 1
     for canonical, syns in synonyms.items():
         for syn in syns:
-            if syn in cleaned:
-                return {
-                    'label_kind': 'category',
-                    'label_value_text': canonical,
-                    'label_value_float': None,
-                    'label_bin': None,
-                }
+            pos = cleaned.find(syn)
+            if pos != -1 and pos < best_pos:
+                best_match = canonical
+                best_pos = pos
+    if best_match is not None:
+        return _make_category(best_match)
 
     return _make_unclear(f"Could not map '{raw_response.strip()[:80]}' to allowed labels")
+
+
+def _make_category(label: str) -> dict:
+    return {
+        'label_kind': 'category',
+        'label_value_text': label,
+        'label_value_float': None,
+        'label_bin': None,
+    }
 
 
 def _make_unclear(reason: str) -> dict:
