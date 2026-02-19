@@ -56,7 +56,7 @@ MODELS_TO_TEST = {
         'backend': 'ollama',
         'ollama_name': 'glm-4.7-flash',
         'family': 'glm',
-        'size_b': 4.7,
+        'size_b': 30.0,                           # 30B total, 3B active (MoE)
         'context_length': 8192,
     },
     'phi4:latest': {
