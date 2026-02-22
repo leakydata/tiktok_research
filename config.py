@@ -113,6 +113,13 @@ MODELS_TO_TEST = {
         'context_length': 400000,
         'fixed_temperature': True,                 # API rejects custom temperature values
     },
+    'claude-haiku-4.5': {
+        'backend': 'anthropic',
+        'api_model_name': 'claude-haiku-4-5-20251001',
+        'family': 'claude',
+        'size_b': 0.0,                            # undisclosed
+        'context_length': 200000,
+    },
 }
 
 # Maximum context window to allocate in Ollama.

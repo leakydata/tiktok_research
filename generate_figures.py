@@ -71,7 +71,7 @@ COLORS = {
     'continuous': '#92c5de',
 }
 
-CLOUD_MODELS = {'deepseek-chat', 'gpt-5-nano', 'minimax-m2.5'}
+CLOUD_MODELS = {'deepseek-chat', 'gpt-5-nano', 'minimax-m2.5', 'claude-haiku-4.5'}
 
 # Model display names
 MODEL_NAMES = {
@@ -84,12 +84,14 @@ MODEL_NAMES = {
     'deepseek-chat': 'DeepSeek-V3.2',
     'gpt-5-nano': 'GPT-5-nano',
     'minimax-m2.5': 'MiniMax-M2.5',
+    'claude-haiku-4.5': 'Claude Haiku 4.5',
 }
 
 MODEL_PARAMS_B = {
     'gemma3:27b': 27, 'alibayram/medgemma:27b': 27, 'gpt-oss:20b': 20,
     'phi4:latest': 14, 'glm-4.7-flash': 9, 'qwen3:32b': 32,
     'deepseek-chat': 685, 'gpt-5-nano': 8, 'minimax-m2.5': 456,
+    'claude-haiku-4.5': 8,
 }
 
 CONSTRUCT_NAMES = {

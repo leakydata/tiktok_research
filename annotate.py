@@ -431,6 +431,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run multi-run LLM annotation")
     parser.add_argument('--resume', type=int, metavar='EXPERIMENT_ID',
                         help='Resume a previous experiment by ID (skips creation)')
+    parser.add_argument('--add-models', type=int, metavar='EXPERIMENT_ID',
+                        help='Add new model tasks to an existing experiment, then run')
     parser.add_argument('--name', default=None, help='Experiment name (required for new runs)')
     parser.add_argument('--description', default='', help='Experiment description')
     parser.add_argument('--chunk-limit', type=int, default=100, help='Max chunks to annotate')
@@ -442,11 +444,27 @@ if __name__ == "__main__":
 
     pipeline = AnnotationPipeline()
     try:
-        if args.resume:
+        if args.add_models:
+            # Inject tasks for new models into an existing experiment, then run
+            exp_id = args.add_models
+            if not args.models:
+                parser.error("--models is required with --add-models")
+            logger.info(f"Adding models {args.models} to experiment {exp_id}")
+            pipeline.create_task_queue(
+                experiment_id=exp_id,
+                chunk_limit=args.chunk_limit,
+                models=args.models,
+                temperatures=args.temperatures,
+                num_runs=args.num_runs,
+                splits=args.splits,
+            )
+            pipeline.run_tasks(exp_id)
+        elif args.resume:
             exp_id = args.resume
             logger.info(f"Resuming experiment {exp_id}")
             pipeline.reset_stale_tasks(exp_id)
             pipeline._log_progress(exp_id)
+            pipeline.run_tasks(exp_id)
         else:
             if not args.name:
                 parser.error("--name is required when starting a new experiment")
@@ -466,6 +484,6 @@ if __name__ == "__main__":
                 num_runs=args.num_runs,
                 splits=args.splits,
             )
-        pipeline.run_tasks(exp_id)
+            pipeline.run_tasks(exp_id)
     finally:
         pipeline.close()
