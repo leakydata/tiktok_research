@@ -276,6 +276,8 @@ Estimated human annotation time for 100 chunks x 6 constructs is on the order of
 
 Local model inference incurred zero marginal cost beyond electricity. Cloud API costs for the 18,000-task experiment were estimated at $2--5 total based on provider list pricing as of January 2026 (DeepSeek: $0.27/M input tokens; MiniMax: $0.15/M; OpenAI GPT-5-nano: $0.05/M input, $0.40/M output). Logged mean output tokens ranged from 2 (DeepSeek) to 657 (GPT-5-nano) per task; input token counts were not logged but are estimated at 300--500 tokens based on prompt and chunk lengths. Exact costs vary by prompt length and provider pricing changes.
 
+**Batch processing discounts.** Both Anthropic and OpenAI offer asynchronous batch APIs that provide 50% cost reductions in exchange for relaxed turnaround times (up to 24 hours). Because multi-run annotation tasks are independent and latency-insensitive, the protocol is well-suited to batch submission. At scale---e.g., annotating the full reliability cohort of ~47,000 chunks across 6 constructs, 2 temperatures, and 5 runs---batch pricing would reduce cloud API costs by half, making large-scale cloud annotation comparable in cost to local inference electricity costs. Our pipeline includes batch submission tooling for both Anthropic Message Batches and OpenAI Batch API endpoints.
+
 ---
 
 ## 5. Discussion
@@ -298,7 +300,7 @@ This limitation mirrors a well-known problem in human content analysis: coders t
 
 In this experimental configuration, locally deployed open-weight models achieved higher average within-model stability (alpha = 0.87) than the cloud APIs evaluated (alpha = 0.76). The best local model (Gemma3 27B, alpha = 0.99) also exceeded the best cloud model (DeepSeek-V3.2, alpha = 0.97). This has practical implications:
 
-1. **Cost:** Local inference has zero marginal cost, while cloud APIs charge per token.
+1. **Cost:** Local inference has zero marginal cost, while cloud APIs charge per token (though batch API discounts of 50% from providers like Anthropic and OpenAI substantially reduce this gap for latency-insensitive workloads like multi-run annotation).
 2. **Reproducibility:** Local models with fixed seeds produce deterministic outputs; cloud APIs may change underlying model weights without notice.
 3. **Privacy:** Health data can remain on-premises, avoiding the regulatory complications of transmitting patient-adjacent data to third-party APIs.
 4. **Accessibility:** Consumer-grade GPUs can run 14--27B models effectively, making the method accessible to research groups without large compute budgets.

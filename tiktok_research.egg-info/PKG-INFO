@@ -11,6 +11,7 @@ Requires-Dist: python-dotenv>=1.0.0
 Requires-Dist: nltk>=3.9.0
 Requires-Dist: matplotlib>=3.10.8
 Requires-Dist: seaborn>=0.13.2
+Requires-Dist: anthropic>=0.83.0
 Provides-Extra: cloud
 Requires-Dist: openai>=1.30.0; extra == "cloud"
 Requires-Dist: anthropic>=0.30.0; extra == "cloud"
