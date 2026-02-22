@@ -500,6 +500,9 @@ if __name__ == "__main__":
     parser.add_argument('--prompt-versions', nargs='+', default=None, metavar='CONSTRUCT=VERSION',
                         help='Per-construct prompt version overrides in key=value format. '
                              'e.g. --prompt-versions agency_control=v2 symptom_concreteness=v2')
+    parser.add_argument('--chunk-ids', nargs='+', type=int, default=None, metavar='CHUNK_ID',
+                        help='Explicit chunk IDs to annotate (overrides --chunk-limit and --splits). '
+                             'Use to pair V1/V2 experiments on identical items.')
     args = parser.parse_args()
 
     # Parse --prompt-versions key=value pairs into a dict
@@ -560,7 +563,11 @@ if __name__ == "__main__":
                 splits=args.splits,
                 constructs=args.constructs,
                 prompt_versions=prompt_versions,
+                chunk_ids=args.chunk_ids,
             )
-            pipeline.run_tasks(exp_id)
+            if args.create_only:
+                logger.info(f"Experiment {exp_id} created. Use --resume {exp_id} or batch_submit.py to run.")
+            else:
+                pipeline.run_tasks(exp_id)
     finally:
         pipeline.close()
