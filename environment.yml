@@ -10,4 +10,9 @@ dependencies:
   - requests>=2.31.0
   - python-dotenv>=1.0.0
   - nltk>=3.9.0
+  - matplotlib>=3.10.0
+  - pandas>=2.1.0
   - pytest>=8.0.0
+  - pip:
+    - openai>=1.30.0
+    - anthropic>=0.83.0
