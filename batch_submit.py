@@ -447,7 +447,8 @@ class BatchProcessor:
             model_name, model_family, model_size_b,
             label_kind, label_value_text, label_value_float, label_bin,
             raw_response, processing_time_ms, tokens_generated,
-            inference_params, ollama_version, quantization
+            inference_params, ollama_version, quantization,
+            prompt_version, prompt_template_name, prompt_hash
         ) VALUES %s
         ON CONFLICT DO NOTHING
         """
@@ -459,6 +460,9 @@ class BatchProcessor:
                 r['label_kind'], r['label_value_text'], r['label_value_float'], r['label_bin'],
                 r['raw_response'], r['processing_time_ms'], r['tokens_generated'],
                 r['inference_params'], r['ollama_version'], r['quantization'],
+                r.get('prompt_version', 'v1'),
+                r.get('prompt_template_name'),
+                r.get('prompt_hash'),
             )
             for r in results
         ]
