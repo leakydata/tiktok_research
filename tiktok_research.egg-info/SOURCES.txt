@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+tests/test_clients.py
+tests/test_parsing.py
+tests/test_stability.py
+tiktok_research.egg-info/PKG-INFO
+tiktok_research.egg-info/SOURCES.txt
+tiktok_research.egg-info/dependency_links.txt
+tiktok_research.egg-info/requires.txt
+tiktok_research.egg-info/top_level.txt

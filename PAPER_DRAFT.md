@@ -114,7 +114,6 @@ All inference parameters (temperature, top-p, top-k, repeat penalty, seed, conte
 **Group-level reliability** was computed per model-construct-temperature combination using:
 
 - **Krippendorff's alpha** with 95% bootstrap confidence intervals (1,000 resamples) for overall reliability. Alpha was computed using nominal distance for categorical constructs and interval distance for continuous constructs, matching the level of measurement for each scale.
-- **Intraclass correlation coefficient (ICC)** for continuous constructs.
 - **Stability rate:** proportion of chunks meeting the stability criterion.
 - **Coverage rate:** 1 - proportion of "none" responses (health content detection).
 - **Clarity rate:** 1 - proportion of "unclear" responses.
@@ -187,6 +186,8 @@ Temperature significantly affected within-model stability for all six constructs
 | Certainty/Hedging | 95.2% | 74.7% | 0.56 | < 0.001 |
 | Symptom Concreteness | 97.0% | 79.0% | 0.50 | < 0.001 |
 
+Perfect stability at T=0.0 for four categorical constructs reflects deterministic decoding under fixed seeds; interpretation of reliability robustness therefore relies primarily on T=0.5 results, where stability remained high (81--98%) but imperfect, confirming genuine consistency rather than mechanical repetition.
+
 For cloud models, the temperature effect was weaker: only agency/control reached significance (p = 0.016), likely because GPT-5-nano's fixed temperature reduced the effective contrast.
 
 ### 4.4 Construct Difficulty
@@ -206,7 +207,7 @@ This hierarchy is consistent across local and cloud models, suggesting it reflec
 
 Cross-model consensus was computed by comparing each model's stable (modal/median) label for each chunk.
 
-**Table 3. Cross-model consensus rates (local model experiment, N=6 models). A sixth model (qwen3:32b) completed 282 of 30,000 tasks before being dropped due to hardware constraints; its partial annotations are included. Krippendorff's alpha handles missingness natively; pairwise deletion was used for percent agreement calculations.**
+**Table 3. Cross-model consensus rates (local model experiment, N=5 fully completed models plus one partial model). A sixth model (qwen3:32b) completed 282 of 30,000 tasks before being dropped due to hardware constraints; its partial annotations are included. Krippendorff's alpha handles missingness natively; pairwise deletion was used for percent agreement calculations. Replicating with only the five fully completed models yielded materially identical alphas (range: 0.33--0.54 vs. 0.34--0.54 with the partial model included).**
 
 | Construct | Unanimous (6/6) | Majority (>3/6) | Cross-Model Alpha [95% CI] |
 |---|---|---|---|
@@ -228,17 +229,17 @@ Cross-model consensus was computed by comparing each model's stable (modal/media
 | Symptom Concreteness | 50.0% | 69.7% | 0.60 [0.47, 0.71] |
 | Agency/Control | 26.8% | 61.9% | 0.08 [-0.01, 0.16] |
 
-Majority consensus exceeded 60% for all constructs in both experiments, indicating that the filtering approach recovers meaningful signal even when models disagree on individual items. Cross-model alpha is systematically lower than majority agreement because alpha adjusts for expected chance agreement under each model's marginal label distribution; when models have different base rates (e.g., one model labels 60% of chunks "active" while another labels 40%), alpha penalizes this even when they agree on specific items. Within-model alpha is substantially higher than cross-model alpha, confirming that individual models are internally consistent while applying subtly different decision boundaries. In this sense, cross-model alpha should be interpreted as a measure of *boundary alignment* across architectures---the degree to which different models partition the construct space in the same way---rather than a measure of individual annotation quality.
+Majority consensus exceeded 60% for all constructs in both experiments, indicating that the filtering approach recovers meaningful signal even when models disagree on individual items. Cross-model alpha is systematically lower than majority agreement because alpha adjusts for expected chance agreement under each model's marginal label distribution. Because alpha is sensitive to systematic base-rate differences even when item-level agreement is high, models that partition the label space differently (e.g., one model labels 60% of chunks "active" while another labels 40%) are penalized even when they agree on specific items. Within-model alpha is substantially higher than cross-model alpha, confirming that individual models are internally consistent while applying subtly different decision boundaries. In this sense, cross-model alpha should be interpreted as a measure of *boundary alignment* across architectures---the degree to which different models partition the construct space in the same way---rather than a measure of individual annotation quality.
 
 The notably low cross-model alpha for agency/control in the cloud experiment (alpha = 0.08) warrants interpretation. This does not indicate that agency/control annotations are unusable; it indicates that cloud models apply *incompatible decision boundaries* for this construct. The role of cross-model comparison is precisely to expose such boundary sensitivity: stability filtering resolves within-model noise (ensuring each model's labels are consistent), while cross-model comparison reveals construct-level ambiguity that may require codebook refinement. For agency/control, majority consensus still reached 61.9%, meaning that for most chunks, at least two of three cloud models agreed---items where they disagreed are flagged for exclusion or human review rather than silently included. This two-stage filtering (within-model stability, then cross-model consensus) is the core methodological contribution: it separates *measurement noise* from *definitional ambiguity*.
 
 ### 4.6 Model Size and Reliability
 
-Model size (in billions of parameters) did not significantly predict reliability. Spearman rank correlation between model size and Krippendorff's alpha across all constructs was rho = -0.023 (p = 0.86). This null result is driven by the strong performance of smaller models: GLM-4.7-Flash (3B active parameters) achieved alpha = 0.80, while the much larger MiniMax-M2.5 achieved only alpha = 0.62.
+Model size (in billions of parameters) did not significantly predict reliability. Spearman rank correlation between model size and Krippendorff's alpha across all constructs was rho = -0.023 (p = 0.86), using active parameter counts for MoE models (3B for GLM-4.7-Flash, 37B for DeepSeek-V3.2) and excluding models with undisclosed sizes. A sensitivity analysis using total parameter counts for MoE models yielded a similarly non-significant result. This null finding is driven by the strong performance of smaller models: GLM-4.7-Flash (3B active parameters) achieved alpha = 0.80, while the much larger MiniMax-M2.5 achieved only alpha = 0.62.
 
 ### 4.7 Discriminant Validity
 
-Pairwise correlations between construct annotations were generally low, confirming that the six constructs measure distinct dimensions. Of 15 pairwise correlations, 11 were non-significant (p > 0.05). The strongest significant correlation was between agency/control and temporal orientation (Cramer's V = 0.38, p < 0.001), which is substantively interpretable: narratives about past health events tend to use more passive framing. No correlation exceeded 0.40, supporting discriminant validity.
+Pairwise correlations between construct annotations were generally low, confirming that the six constructs measure distinct dimensions. All discriminant validity analyses were conducted on stable within-model labels aggregated by median (continuous) or mode (categorical) for each chunk. Of 15 pairwise correlations, 11 were non-significant (p > 0.05). The strongest significant correlation was between agency/control and temporal orientation (Cramer's V = 0.38, p < 0.001), which is substantively interpretable: narratives about past health events tend to use more passive framing. No correlation exceeded 0.40, supporting discriminant validity.
 
 ### 4.8 Convergence Analysis (R=1 to R=5)
 
@@ -273,7 +274,7 @@ Several design choices could inflate apparent reliability. We address each:
 
 Estimated human annotation time for 100 chunks x 6 constructs is on the order of 50--150 person-hours depending on coder training, codebook complexity, and the number of annotation passes required for calibration (Krippendorff, 2004). Using a midpoint estimate of 100 person-hours, the fastest model (MedGemma 27B) completed the equivalent task in 0.76 hours---a ~132x speedup. Even the slowest model (GLM-4.7-Flash) was 3x faster than human annotation, and this ratio improves dramatically at scale since the multi-run protocol (5 runs) is already included in these timings.
 
-Local model inference incurred zero marginal cost beyond electricity. Cloud API costs for the 18,000-task experiment were estimated at $2--5 total, assuming approximately 300--500 input tokens and 10--50 output tokens per task at provider list pricing as of January 2026 (DeepSeek: $0.27/M input tokens; MiniMax: $0.15/M; OpenAI GPT-5-nano: $0.05/M input, $0.40/M output). Exact costs vary by prompt length and provider pricing changes.
+Local model inference incurred zero marginal cost beyond electricity. Cloud API costs for the 18,000-task experiment were estimated at $2--5 total based on provider list pricing as of January 2026 (DeepSeek: $0.27/M input tokens; MiniMax: $0.15/M; OpenAI GPT-5-nano: $0.05/M input, $0.40/M output). Logged mean output tokens ranged from 2 (DeepSeek) to 657 (GPT-5-nano) per task; input token counts were not logged but are estimated at 300--500 tokens based on prompt and chunk lengths. Exact costs vary by prompt length and provider pricing changes.
 
 ---
 
@@ -293,9 +294,9 @@ Our method establishes reliability rigorously but addresses validity only indire
 
 This limitation mirrors a well-known problem in human content analysis: coders trained on the same codebook in the same cultural context may achieve high inter-rater reliability while systematically miscoding constructs that the codebook defines poorly (Krippendorff, 2004). The remedy in both cases is external validation---comparing annotations against an independent ground truth. We explicitly frame our method as establishing the *reliability* precondition for valid annotation, not as a replacement for construct validation studies. Future work should include a human coder pilot (even 20--30 chunks) to compare human-human alpha with human-LLM alpha on stable items, which would directly test whether model agreement overlaps with expert judgment.
 
-### 5.3 Local Models Outperform Cloud APIs
+### 5.3 Local Models Achieved Higher Stability Than Cloud APIs
 
-A striking finding is that locally-run open-weight models achieved higher average reliability (alpha = 0.87) than cloud API models (alpha = 0.76). The best local model (Gemma3 27B, alpha = 0.99) outperformed the best cloud model (DeepSeek-V3.2, alpha = 0.97). This has significant practical implications:
+In this experimental configuration, locally deployed open-weight models achieved higher average within-model stability (alpha = 0.87) than the cloud APIs evaluated (alpha = 0.76). The best local model (Gemma3 27B, alpha = 0.99) also exceeded the best cloud model (DeepSeek-V3.2, alpha = 0.97). This has practical implications:
 
 1. **Cost:** Local inference has zero marginal cost, while cloud APIs charge per token.
 2. **Reproducibility:** Local models with fixed seeds produce deterministic outputs; cloud APIs may change underlying model weights without notice.

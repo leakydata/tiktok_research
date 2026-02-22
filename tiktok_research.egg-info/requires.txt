@@ -1,0 +1,15 @@
+psycopg2-binary>=2.9.9
+numpy>=1.26.2
+scipy>=1.11.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+nltk>=3.9.0
+matplotlib>=3.10.8
+seaborn>=0.13.2
+
+[cloud]
+openai>=1.30.0
+anthropic>=0.30.0
+
+[dev]
+pytest>=8.0.0
