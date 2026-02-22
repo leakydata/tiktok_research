@@ -20,7 +20,7 @@ from config import (
     DEFAULT_CHUNKING_METHOD, DEFAULT_STABILITY_THRESHOLD,
     DEFAULT_MAX_TOKENS, BACKEND_CONFIGS,
 )
-from prompts import HealthLanguagePrompts
+from prompts import HealthLanguagePrompts, render_prompt
 from label_parsing import normalize_label
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -82,17 +82,32 @@ class AnnotationPipeline:
         temperatures: list[float] = None,
         num_runs: int = NUM_RUNS,
         chunk_limit: int = None,
+        prompt_versions: dict = None,
     ) -> int:
-        """Create an experiment record and return its ID."""
+        """Create an experiment record and return its ID.
+
+        prompt_versions : dict, optional
+            Per-construct prompt version override, e.g.
+            {'agency_control': 'v2', 'symptom_concreteness': 'v2'}.
+            Constructs not listed default to 'v1'.
+        """
         models = models or list(MODELS_TO_TEST.keys())
         temperatures = temperatures or TEMPERATURES
+        prompt_versions = prompt_versions or {}
+
+        # Resolve full per-construct version map (explicit overrides + v1 defaults)
+        resolved_versions = {c: prompt_versions.get(c, 'v1') for c in CONSTRUCTS}
+        # Experiment-level summary: 'v1' if all v1, 'mixed' otherwise
+        exp_prompt_version = (
+            'v1' if all(v == 'v1' for v in resolved_versions.values()) else 'mixed'
+        )
 
         config_snapshot = {
             'models': models,
             'temperatures': temperatures,
             'num_runs': num_runs,
             'constructs': CONSTRUCTS,
-            'stability_thresholds': {k: str(v) for k, v in {}. items()},
+            'prompt_versions': resolved_versions,
             'chunking_method': DEFAULT_CHUNKING_METHOD,
             'chunking_config': CHUNKING_CONFIGS.get(DEFAULT_CHUNKING_METHOD, {}),
             'chunk_limit': chunk_limit,
@@ -109,7 +124,8 @@ class AnnotationPipeline:
                 RETURNING experiment_id
             """, (
                 name, description, models, temperatures, num_runs,
-                DEFAULT_CHUNKING_METHOD, 'v1', 'v1', json.dumps(config_snapshot),
+                DEFAULT_CHUNKING_METHOD, 'v1', exp_prompt_version,
+                json.dumps(config_snapshot),
             ))
             experiment_id = cur.fetchone()[0]
             self.conn.commit()
@@ -124,28 +140,47 @@ class AnnotationPipeline:
         temperatures: list[float] = None,
         num_runs: int = NUM_RUNS,
         splits: list[str] = None,
+        constructs: list[str] = None,
+        prompt_versions: dict = None,
+        chunk_ids: list[int] = None,
     ) -> int:
-        """Populate the annotation_tasks queue for an experiment."""
+        """Populate the annotation_tasks queue for an experiment.
+
+        constructs : list[str], optional
+            Subset of constructs to run. Defaults to all CONSTRUCTS.
+        prompt_versions : dict, optional
+            Per-construct version override, e.g. {'agency_control': 'v2'}.
+            Constructs not listed default to 'v1'.
+        chunk_ids : list[int], optional
+            Explicit list of chunk IDs to use (overrides split+limit selection).
+            Use this for mini-studies where you need exact chunk control.
+        """
         models = models or list(MODELS_TO_TEST.keys())
         temperatures = temperatures or TEMPERATURES
         splits = splits or ['development', 'reliability']
+        constructs = constructs or CONSTRUCTS
+        prompt_versions = prompt_versions or {}
 
-        # Get chunks
-        split_placeholders = ','.join(['%s'] * len(splits))
-        chunk_query = f"""
-            SELECT chunk_id FROM annotation_chunks ac
-            INNER JOIN study_cohort sc ON ac.creator_username = sc.creator_username
-            WHERE sc.cohort_split IN ({split_placeholders})
-            ORDER BY ac.chunk_id
-        """
-        params = list(splits)
-        if chunk_limit:
-            chunk_query += " LIMIT %s"
-            params.append(chunk_limit)
+        # Build resolved per-construct version map
+        resolved_versions = {c: prompt_versions.get(c, 'v1') for c in constructs}
 
-        with self.conn.cursor() as cur:
-            cur.execute(chunk_query, params)
-            chunk_ids = [row[0] for row in cur.fetchall()]
+        # Get chunks (explicit list takes priority over split query)
+        if chunk_ids is None:
+            split_placeholders = ','.join(['%s'] * len(splits))
+            chunk_query = f"""
+                SELECT chunk_id FROM annotation_chunks ac
+                INNER JOIN study_cohort sc ON ac.creator_username = sc.creator_username
+                WHERE sc.cohort_split IN ({split_placeholders})
+                ORDER BY ac.chunk_id
+            """
+            params = list(splits)
+            if chunk_limit:
+                chunk_query += " LIMIT %s"
+                params.append(chunk_limit)
+
+            with self.conn.cursor() as cur:
+                cur.execute(chunk_query, params)
+                chunk_ids = [row[0] for row in cur.fetchall()]
 
         if not chunk_ids:
             logger.warning("No chunks found for task queue")
@@ -153,22 +188,28 @@ class AnnotationPipeline:
 
         logger.info(
             f"Creating task queue: {len(chunk_ids)} chunks x {len(models)} models x "
-            f"{len(CONSTRUCTS)} constructs x {len(temperatures)} temps x {num_runs} runs"
+            f"{len(constructs)} constructs x {len(temperatures)} temps x {num_runs} runs"
         )
+        for c, v in resolved_versions.items():
+            if v != 'v1':
+                logger.info(f"  Prompt override: {c} -> {v}")
 
-        total_tasks = len(chunk_ids) * len(models) * len(CONSTRUCTS) * len(temperatures) * num_runs
+        total_tasks = len(chunk_ids) * len(models) * len(constructs) * len(temperatures) * num_runs
         logger.info(f"Total tasks: {total_tasks:,}")
 
         # Batch insert tasks — models outer loop (smallest first) for faster initial results
         task_rows = []
         for model in models:
             for chunk_id in chunk_ids:
-                for construct in CONSTRUCTS:
+                for construct in constructs:
+                    version = resolved_versions[construct]
+                    template_name = f"{construct}_{version}"
                     for temp in temperatures:
                         for run_num in range(1, num_runs + 1):
                             task_rows.append((
                                 experiment_id, chunk_id, construct, model,
                                 temp, 'single_label', run_num,
+                                version, template_name,
                             ))
 
                 if len(task_rows) >= 5000:
@@ -193,7 +234,8 @@ class AnnotationPipeline:
         query = """
         INSERT INTO annotation_tasks (
             experiment_id, chunk_id, construct_name, model_name,
-            temperature, prompt_format, run_number
+            temperature, prompt_format, run_number,
+            prompt_version, prompt_template_name
         ) VALUES %s
         ON CONFLICT DO NOTHING
         """
@@ -226,6 +268,7 @@ class AnnotationPipeline:
                     SELECT
                         t.task_id, t.chunk_id, t.construct_name, t.model_name,
                         t.temperature, t.prompt_format, t.run_number,
+                        t.prompt_version, t.prompt_template_name,
                         ac.chunk_text, ac.context_carry_text
                     FROM annotation_tasks t
                     INNER JOIN annotation_chunks ac ON t.chunk_id = ac.chunk_id
@@ -303,8 +346,10 @@ class AnnotationPipeline:
 
     def _annotate_single(self, task: dict, experiment_id: int) -> Optional[dict]:
         """Run a single annotation and return the result dict."""
-        prompt_func = HealthLanguagePrompts.get_prompt_func(task['construct_name'])
-        prompt = prompt_func(
+        version = task.get('prompt_version') or 'v1'
+        prompt, template_name, prompt_hash = render_prompt(
+            task['construct_name'],
+            version,
             task['chunk_text'],
             context_carry=task.get('context_carry_text'),
         )
@@ -340,6 +385,9 @@ class AnnotationPipeline:
             'inference_params': json.dumps(result['inference_params']),
             'ollama_version': result['ollama_version'],
             'quantization': result['quantization'],
+            'prompt_version': version,
+            'prompt_template_name': template_name,
+            'prompt_hash': prompt_hash,
         }
 
     def _insert_results(self, results: list[dict]):
@@ -350,7 +398,8 @@ class AnnotationPipeline:
             model_name, model_family, model_size_b,
             label_kind, label_value_text, label_value_float, label_bin,
             raw_response, processing_time_ms, tokens_generated,
-            inference_params, ollama_version, quantization
+            inference_params, ollama_version, quantization,
+            prompt_version, prompt_template_name, prompt_hash
         ) VALUES %s
         ON CONFLICT DO NOTHING
         """
@@ -362,6 +411,9 @@ class AnnotationPipeline:
                 r['label_kind'], r['label_value_text'], r['label_value_float'], r['label_bin'],
                 r['raw_response'], r['processing_time_ms'], r['tokens_generated'],
                 r['inference_params'], r['ollama_version'], r['quantization'],
+                r.get('prompt_version', 'v1'),
+                r.get('prompt_template_name'),
+                r.get('prompt_hash'),
             )
             for r in results
         ]
@@ -442,7 +494,22 @@ if __name__ == "__main__":
     parser.add_argument('--temperatures', nargs='+', type=float, default=None)
     parser.add_argument('--num-runs', type=int, default=NUM_RUNS)
     parser.add_argument('--splits', nargs='+', default=['development', 'reliability'])
+    parser.add_argument('--constructs', nargs='+', default=None,
+                        help='Constructs to annotate (default: all). '
+                             'e.g. --constructs agency_control symptom_concreteness')
+    parser.add_argument('--prompt-versions', nargs='+', default=None, metavar='CONSTRUCT=VERSION',
+                        help='Per-construct prompt version overrides in key=value format. '
+                             'e.g. --prompt-versions agency_control=v2 symptom_concreteness=v2')
     args = parser.parse_args()
+
+    # Parse --prompt-versions key=value pairs into a dict
+    prompt_versions = {}
+    if args.prompt_versions:
+        for item in args.prompt_versions:
+            if '=' not in item:
+                parser.error(f"--prompt-versions items must be in CONSTRUCT=VERSION format, got: {item!r}")
+            construct, version = item.split('=', 1)
+            prompt_versions[construct.strip()] = version.strip()
 
     pipeline = AnnotationPipeline()
     try:
@@ -459,6 +526,8 @@ if __name__ == "__main__":
                 temperatures=args.temperatures,
                 num_runs=args.num_runs,
                 splits=args.splits,
+                constructs=args.constructs,
+                prompt_versions=prompt_versions,
             )
             if args.create_only:
                 logger.info("Tasks created. Use batch_submit.py to submit via batch API.")
@@ -480,6 +549,7 @@ if __name__ == "__main__":
                 temperatures=args.temperatures,
                 num_runs=args.num_runs,
                 chunk_limit=args.chunk_limit,
+                prompt_versions=prompt_versions,
             )
             pipeline.create_task_queue(
                 experiment_id=exp_id,
@@ -488,6 +558,8 @@ if __name__ == "__main__":
                 temperatures=args.temperatures,
                 num_runs=args.num_runs,
                 splits=args.splits,
+                constructs=args.constructs,
+                prompt_versions=prompt_versions,
             )
             pipeline.run_tasks(exp_id)
     finally:

@@ -115,6 +115,10 @@ CREATE TABLE IF NOT EXISTS annotation_tasks (
     prompt_format TEXT NOT NULL,
     run_number INTEGER NOT NULL,
 
+    -- Prompt versioning (v1 = original; v2 = Phase 2 tightened operationalization)
+    prompt_version TEXT NOT NULL DEFAULT 'v1',
+    prompt_template_name TEXT,  -- e.g. 'agency_control_v2'
+
     -- Status
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped')),
@@ -170,6 +174,11 @@ CREATE TABLE IF NOT EXISTS llm_annotation_runs (
     ollama_version TEXT,
     quantization TEXT,
 
+    -- Prompt versioning
+    prompt_version TEXT NOT NULL DEFAULT 'v1',
+    prompt_template_name TEXT,        -- e.g. 'agency_control_v2'
+    prompt_hash TEXT,                 -- sha256 of the full rendered prompt (after chunk insertion)
+
     created_at TIMESTAMP DEFAULT NOW(),
 
     UNIQUE(experiment_id, chunk_id, construct_name, run_number, temperature, prompt_format, model_name)
@@ -180,6 +189,8 @@ CREATE INDEX IF NOT EXISTS idx_runs_construct ON llm_annotation_runs(construct_n
 CREATE INDEX IF NOT EXISTS idx_runs_model ON llm_annotation_runs(model_name);
 CREATE INDEX IF NOT EXISTS idx_runs_experiment ON llm_annotation_runs(experiment_id);
 CREATE INDEX IF NOT EXISTS idx_runs_label_kind ON llm_annotation_runs(label_kind);
+CREATE INDEX IF NOT EXISTS idx_tasks_prompt_version ON annotation_tasks(prompt_version);
+CREATE INDEX IF NOT EXISTS idx_runs_prompt_version ON llm_annotation_runs(prompt_version);
 
 -- ============================================================
 -- ANNOTATION STABILITY METRICS

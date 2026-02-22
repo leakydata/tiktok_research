@@ -32,7 +32,7 @@ from config import (
     DB_CONFIG, MODELS_TO_TEST, BACKEND_CONFIGS,
     CONSTRUCTS, DEFAULT_MAX_TOKENS,
 )
-from prompts import HealthLanguagePrompts
+from prompts import render_prompt
 from label_parsing import normalize_label
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,7 +56,7 @@ class BatchProcessor:
             cur.execute("""
                 SELECT at.task_id, at.chunk_id, at.construct_name,
                        at.model_name, at.temperature, at.run_number,
-                       at.prompt_format,
+                       at.prompt_format, at.prompt_version, at.prompt_template_name,
                        ac.chunk_text, ac.context_carry_text
                 FROM annotation_tasks at
                 INNER JOIN annotation_chunks ac ON at.chunk_id = ac.chunk_id
@@ -68,9 +68,14 @@ class BatchProcessor:
             return cur.fetchall()
 
     def build_prompt(self, task):
-        """Build the annotation prompt for a task."""
-        prompt_func = HealthLanguagePrompts.get_prompt_func(task['construct_name'])
-        return prompt_func(
+        """Build the annotation prompt for a task.
+
+        Returns (rendered_text, template_name, prompt_hash).
+        """
+        version = task.get('prompt_version') or 'v1'
+        return render_prompt(
+            task['construct_name'],
+            version,
             task['chunk_text'],
             context_carry=task.get('context_carry_text'),
         )
@@ -88,7 +93,7 @@ class BatchProcessor:
 
         requests = []
         for task in tasks:
-            prompt = self.build_prompt(task)
+            prompt, _, __ = self.build_prompt(task)
             temp = task['temperature']
 
             params = MessageCreateParamsNonStreaming(
@@ -151,8 +156,10 @@ class BatchProcessor:
             cur.execute("""
                 SELECT at.task_id, at.chunk_id, at.construct_name,
                        at.model_name, at.temperature, at.run_number,
-                       at.prompt_format
+                       at.prompt_format, at.prompt_version, at.prompt_template_name,
+                       ac.chunk_text, ac.context_carry_text
                 FROM annotation_tasks at
+                INNER JOIN annotation_chunks ac ON at.chunk_id = ac.chunk_id
                 WHERE at.experiment_id = %s AND at.model_name = %s
             """, (self.experiment_id, self.model_key))
             for row in cur.fetchall():
@@ -177,6 +184,11 @@ class BatchProcessor:
                 tokens = msg.usage.output_tokens if msg.usage else 0
 
                 parsed = normalize_label(text.strip(), task['construct_name'])
+                version = task.get('prompt_version') or 'v1'
+                _, template_name, prompt_hash = render_prompt(
+                    task['construct_name'], version,
+                    task['chunk_text'], context_carry=task.get('context_carry_text'),
+                )
                 results.append({
                     'task_id': int(task_id),
                     'experiment_id': self.experiment_id,
@@ -202,6 +214,9 @@ class BatchProcessor:
                     }),
                     'ollama_version': 'anthropic/batch',
                     'quantization': 'none',
+                    'prompt_version': version,
+                    'prompt_template_name': template_name,
+                    'prompt_hash': prompt_hash,
                 })
             elif result_type == 'errored':
                 # Docs: result.result.error.type is 'invalid_request' or server error
@@ -248,7 +263,7 @@ class BatchProcessor:
         # Build JSONL
         lines = []
         for task in tasks:
-            prompt = self.build_prompt(task)
+            prompt, _, __ = self.build_prompt(task)
             body = {
                 'model': api_model,
                 'messages': [{'role': 'user', 'content': prompt}],
