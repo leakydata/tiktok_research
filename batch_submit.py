@@ -575,10 +575,11 @@ Not supported (use 'python annotate.py --resume' instead):
     elif args.command == 'run':
         proc = BatchProcessor(args.experiment_id, args.model)
         try:
-            proc.run()
+            proc.run(batch_size=args.batch_size)
         except KeyboardInterrupt:
-            print("\nInterrupted. Batch continues server-side.")
-            print("Resume with: python batch_submit.py status --batch-id <id> --model " + args.model)
+            print("\nInterrupted. Batch(es) continue server-side.")
+            print(f"Check state files in: {STATE_DIR}")
+            print(f"Resume with: python batch_submit.py status --batch-id <id> --model {args.model}")
         finally:
             proc.close()
 
