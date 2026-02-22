@@ -176,12 +176,12 @@ class AnthropicClient(BaseLLMClient):
         model_cfg = MODELS_TO_TEST[model_key]
         api_model = model_cfg['api_model_name']
 
+        # Anthropic does not allow temperature + top_p together
         params = {
             'model': api_model,
             'messages': [{'role': 'user', 'content': prompt}],
             'temperature': temperature,
             'max_tokens': max_tokens,
-            'top_p': top_p,
         }
         if stop_sequences:
             params['stop_sequences'] = stop_sequences
@@ -196,7 +196,6 @@ class AnthropicClient(BaseLLMClient):
 
         inference_params = {
             'temperature': temperature,
-            'top_p': top_p,
             'max_tokens': max_tokens,
             'seed': None,
             'stop': stop_sequences,

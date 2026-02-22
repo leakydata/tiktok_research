@@ -95,7 +95,6 @@ class BatchProcessor:
                 model=api_model,
                 max_tokens=DEFAULT_MAX_TOKENS,
                 temperature=temp,
-                top_p=0.9,
                 messages=[{'role': 'user', 'content': prompt}],
             )
             requests.append(Request(
