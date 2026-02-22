@@ -358,10 +358,13 @@ class BatchProcessor:
         task_map = {}
         with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT task_id, chunk_id, construct_name, model_name,
-                       temperature, run_number, prompt_format
-                FROM annotation_tasks
-                WHERE experiment_id = %s AND model_name = %s
+                SELECT at.task_id, at.chunk_id, at.construct_name,
+                       at.model_name, at.temperature, at.run_number,
+                       at.prompt_format, at.prompt_version, at.prompt_template_name,
+                       ac.chunk_text, ac.context_carry_text
+                FROM annotation_tasks at
+                INNER JOIN annotation_chunks ac ON at.chunk_id = ac.chunk_id
+                WHERE at.experiment_id = %s AND at.model_name = %s
             """, (self.experiment_id, self.model_key))
             for row in cur.fetchall():
                 task_map[str(row['task_id'])] = dict(row)
@@ -386,6 +389,11 @@ class BatchProcessor:
                 tokens = usage.get('completion_tokens', 0)
 
                 parsed = normalize_label(text.strip(), task['construct_name'])
+                version = task.get('prompt_version') or 'v1'
+                _, template_name, prompt_hash = render_prompt(
+                    task['construct_name'], version,
+                    task['chunk_text'], context_carry=task.get('context_carry_text'),
+                )
                 results.append({
                     'task_id': int(task_id),
                     'experiment_id': self.experiment_id,
@@ -412,6 +420,9 @@ class BatchProcessor:
                     }),
                     'ollama_version': 'openai/batch',
                     'quantization': 'none',
+                    'prompt_version': version,
+                    'prompt_template_name': template_name,
+                    'prompt_hash': prompt_hash,
                 })
                 succeeded += 1
             else:
