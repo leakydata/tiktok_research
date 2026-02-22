@@ -16,7 +16,7 @@ Human annotation, while considered the gold standard, faces several practical li
 
 Large language models (LLMs) offer a potential solution, but their use in content analysis raises fundamental questions about reliability. A single LLM inference is inherently stochastic: the same prompt may produce different outputs across runs, and different models may disagree on the correct annotation. Prior work has largely treated LLM annotation as a replacement for a single human coder, evaluating LLM outputs against human gold-standard labels (Gilardi et al., 2023; Törnberg, 2023). This approach conflates two distinct questions: (1) whether the LLM produces the "correct" label, and (2) whether the LLM produces the label *reliably*.
 
-We argue that reliability---the consistency of annotation across repeated measurements---is the more fundamental property for content analysis. In classical content analysis methodology, inter-rater reliability (e.g., Krippendorff's alpha, Cohen's kappa) does not require a gold standard; it requires only that independent raters agree. We propose extending this principle to LLM-based annotation through **multi-run stability filtering**: running each annotation multiple times across diverse models and retaining only those items where the models demonstrate stable agreement.
+We argue that reliability---the consistency of annotation across repeated measurements---is the more fundamental property for content analysis. In classical content analysis methodology, inter-rater reliability (e.g., Krippendorff's alpha, Cohen's kappa) does not require a gold standard; it requires only that independent raters agree. We propose extending this principle to LLM-based annotation through **multi-run stability filtering**: each item is annotated multiple times (e.g., five runs) by each of several LLMs at controlled temperature settings, and only items where a model produces the same label consistently (e.g., in at least 4 of 5 runs) are retained as reliably annotated. Cross-model consensus then provides a second layer of filtering, flagging items where architecturally diverse models disagree for exclusion or human review.
 
 This paper makes the following contributions:
 
@@ -46,7 +46,7 @@ The conceptual framework of inter-rater reliability does not require that raters
 
 ### 2.3 Health Communication on TikTok
 
-TikTok has emerged as a significant platform for health information sharing, particularly among younger populations. Prior research has examined mental health disclosure (Basch et al., 2022), self-diagnosis trends (Comp et al., 2023), and the spread of health misinformation on the platform. A particularly salient phenomenon involves chronic illnesses with overlapping symptom profiles---such as MCAS, EDS, POTS, and CIRS---where social media communities may amplify self-diagnosis through shared symptom narratives that blur the boundaries between distinct conditions (Giedinghagen, 2023; Zehrung & Chen, 2024). The overlapping and often ambiguous presentations of these disorders make them an ideal test case for automated content analysis, as they require constructs that capture degrees of certainty, medical authority claims, and symptom specificity. Content analysis of TikTok health discourse has relied primarily on manual coding of small samples, limiting the scope and generalizability of findings. Hassan et al. (2024) demonstrated automated multi-label annotation for mental health content on Reddit using LLMs, but did not address reliability through multi-run stability or cross-model convergence.
+TikTok has emerged as a significant platform for health information sharing, particularly among younger populations. Prior research has examined mental health disclosure (Basch et al., 2022), self-diagnosis trends (Comp et al., 2023), and the spread of health misinformation on the platform. A particularly salient phenomenon involves chronic illnesses with overlapping symptom profiles---such as MCAS, EDS, POTS, and CIRS---where social media communities may amplify self-diagnosis through shared symptom narratives that blur the boundaries between distinct conditions (Giedinghagen, 2023; Zehrung & Chen, 2024). The overlapping and often ambiguous presentations of these disorders make them an ideal test case for automated content analysis, as they require constructs that capture degrees of certainty, medical authority claims, and symptom specificity. Content analysis of TikTok health discourse has relied primarily on manual coding of small samples, limiting the scope and generalizability of findings. Hassan et al. (2024) demonstrated automated multi-label annotation for mental health content on Reddit using LLMs with single-label, multi-label, and unrestricted prompting strategies, evaluating performance against human gold-standard labels. Their work validated LLM accuracy for classification but did not address within-model reliability through multi-run stability or cross-model convergence---the central concern of the present study.
 
 ### 2.4 Mixture-of-Experts and Efficient Inference
 
@@ -113,7 +113,7 @@ All inference parameters (temperature, top-p, top-k, repeat penalty, seed, conte
 
 **Group-level reliability** was computed per model-construct-temperature combination using:
 
-- **Krippendorff's alpha** with 95% bootstrap confidence intervals (1,000 resamples) for overall reliability.
+- **Krippendorff's alpha** with 95% bootstrap confidence intervals (1,000 resamples) for overall reliability. Alpha was computed using nominal distance for categorical constructs and interval distance for continuous constructs, matching the level of measurement for each scale.
 - **Intraclass correlation coefficient (ICC)** for continuous constructs.
 - **Stability rate:** proportion of chunks meeting the stability criterion.
 - **Coverage rate:** 1 - proportion of "none" responses (health content detection).
@@ -157,7 +157,7 @@ Symptom concreteness was the most challenging construct, with the lowest valid r
 
 Table 1 presents stability metrics for all eight models.
 
-**Table 1. Within-model stability by model (averaged across constructs and both temperatures). T=0.5-only alpha values for the top three models: Gemma3 = 0.98, DeepSeek-V3.2 = 0.95, MedGemma = 0.92.**
+**Table 1. Within-model stability by model (averaged across constructs and both temperatures).**
 
 | Model | Backend | Params | Avg Alpha | Avg Stability | Avg Coverage | Avg Clarity |
 |---|---|---|---|---|---|---|
@@ -170,7 +170,7 @@ Table 1 presents stability metrics for all eight models.
 | GPT-5-nano | Cloud | Undisclosed | 0.693 | 70.8% | 98.1% | 92.3% |
 | MiniMax-M2.5 | Cloud | Undisclosed | 0.623 | 67.5% | 95.8% | 97.4% |
 
-Seven of eight models exceeded alpha = 0.667 (the accepted threshold for tentative conclusions in content analysis). The top three models exceeded alpha = 0.95. Notably, local open-weight models (mean alpha = 0.87) outperformed cloud API models (mean alpha = 0.76) on average.
+Seven of eight models exceeded alpha = 0.667 (the accepted threshold for tentative conclusions in content analysis). The top three models exceeded alpha = 0.95. Importantly, these high reliability values are not artifacts of deterministic inference: at T=0.5 only (where sampling introduces genuine stochasticity), the top three models still achieved alpha = 0.98 (Gemma3), 0.95 (DeepSeek-V3.2), and 0.92 (MedGemma). Notably, local open-weight models (mean alpha = 0.87) outperformed cloud API models (mean alpha = 0.76) on average.
 
 ### 4.3 Temperature Effect
 
@@ -228,7 +228,7 @@ Cross-model consensus was computed by comparing each model's stable (modal/media
 | Symptom Concreteness | 50.0% | 69.7% | 0.60 [0.47, 0.71] |
 | Agency/Control | 26.8% | 61.9% | 0.08 [-0.01, 0.16] |
 
-Majority consensus exceeded 60% for all constructs in both experiments, indicating that the filtering approach recovers meaningful signal even when models disagree on individual items. Cross-model alpha is systematically lower than majority agreement because alpha adjusts for expected chance agreement under each model's marginal label distribution; when models have different base rates (e.g., one model labels 60% of chunks "active" while another labels 40%), alpha penalizes this even when they agree on specific items. Within-model alpha is substantially higher than cross-model alpha, confirming that individual models are internally consistent while applying subtly different decision boundaries.
+Majority consensus exceeded 60% for all constructs in both experiments, indicating that the filtering approach recovers meaningful signal even when models disagree on individual items. Cross-model alpha is systematically lower than majority agreement because alpha adjusts for expected chance agreement under each model's marginal label distribution; when models have different base rates (e.g., one model labels 60% of chunks "active" while another labels 40%), alpha penalizes this even when they agree on specific items. Within-model alpha is substantially higher than cross-model alpha, confirming that individual models are internally consistent while applying subtly different decision boundaries. In this sense, cross-model alpha should be interpreted as a measure of *boundary alignment* across architectures---the degree to which different models partition the construct space in the same way---rather than a measure of individual annotation quality.
 
 The notably low cross-model alpha for agency/control in the cloud experiment (alpha = 0.08) warrants interpretation. This does not indicate that agency/control annotations are unusable; it indicates that cloud models apply *incompatible decision boundaries* for this construct. The role of cross-model comparison is precisely to expose such boundary sensitivity: stability filtering resolves within-model noise (ensuring each model's labels are consistent), while cross-model comparison reveals construct-level ambiguity that may require codebook refinement. For agency/control, majority consensus still reached 61.9%, meaning that for most chunks, at least two of three cloud models agreed---items where they disagreed are flagged for exclusion or human review rather than silently included. This two-stage filtering (within-model stability, then cross-model consensus) is the core methodological contribution: it separates *measurement noise* from *definitional ambiguity*.
 
@@ -248,7 +248,7 @@ The multi-run design was empirically justified by analyzing how stability and la
 
 Several design choices could inflate apparent reliability. We address each:
 
-**T=0.0 inflation.** At temperature 0.0 with a fixed seed, a fully deterministic model would produce identical outputs across all five runs, yielding perfect alpha mechanically. This concern is partially mitigated by the fact that we observed run-to-run variation at T=0.0 for several model-construct pairs (e.g., certainty/hedging at 95.2% stability, not 100%), likely due to floating-point non-determinism in GPU computation. More importantly, we report T=0.5 results separately throughout. At T=0.5, where sampling introduces genuine stochasticity, the top models still achieve alpha > 0.80 (Gemma3: 0.98, DeepSeek: 0.95, MedGemma: 0.92 at T=0.5), confirming that high reliability is not an artifact of deterministic inference.
+**T=0.0 inflation.** At temperature 0.0 with a fixed seed, a fully deterministic inference engine would produce identical outputs across all five runs, yielding perfect alpha mechanically rather than reflecting genuine reliability. In practice, we observed run-to-run variation at T=0.0 for several model-construct pairs (e.g., certainty/hedging at 95.2% stability, not 100%), indicating that GPU floating-point non-determinism introduces residual stochasticity even at T=0.0. Nonetheless, T=0.0 alpha should be interpreted as an upper bound on reliability under near-deterministic conditions rather than as evidence of robustness to sampling variation. For this reason, we report T=0.5 results separately throughout. At T=0.5, where sampling introduces genuine stochasticity, the top models still achieve alpha > 0.80 (Gemma3: 0.98, DeepSeek: 0.95, MedGemma: 0.92 at T=0.5), confirming that high reliability is not an artifact of deterministic inference.
 
 **Bin granularity for continuous constructs.** Continuous constructs are binned into three categories (low/moderate/high) for agreement computation, which could inflate alpha by collapsing fine-grained disagreements. This is a deliberate design choice: the three-bin scheme (0.0--0.29, 0.3--0.69, 0.7--1.0) reflects the practical resolution at which content analysis findings are reported. Nonetheless, we also report raw numeric stability (range <= 0.2, SD <= 0.10), which is more stringent than bin agreement---a chunk could fall in the same bin despite a 0.28-point range. The stability rates for continuous constructs (certainty/hedging: 74.4%, symptom concreteness: 68.3%) are notably lower than for categorical constructs, indicating that the binning does not trivialize agreement.
 
@@ -365,15 +365,15 @@ Giedinghagen, A. (2023). The tic in TikTok and (where) all systems go: Mass soci
 
 Gilardi, F., Alizadeh, M., & Kubli, M. (2023). ChatGPT outperforms crowd-workers for text-annotation tasks. *Proceedings of the National Academy of Sciences*, 120(30), e2305016120.
 
-Hassan, M., et al. (2024). Automated multi-label annotation for mental health illnesses using large language models. *arXiv preprint arXiv:2412.xxxxx*.
+Hassan, A. A., Hanafy, R. J., & Fouda, M. E. (2024). Automated multi-label annotation for mental health illnesses using large language models. *arXiv preprint arXiv:2412.03796*.
 
 Krippendorff, K. (2004). *Content Analysis: An Introduction to Its Methodology* (2nd ed.). Sage.
-
-Zehrung, R. F., & Chen, Y. (2024). Self-expression and sharing around chronic illness on TikTok. *AMIA Annual Symposium Proceedings*, 2023, 1334--1343.
 
 Shazeer, N., et al. (2017). Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. *Proceedings of ICLR 2017*.
 
 Törnberg, P. (2023). ChatGPT-4 outperforms experts and crowd workers in annotating political Twitter messages with zero-shot learning. *arXiv preprint arXiv:2304.06588*.
+
+Zehrung, R. F., & Chen, Y. (2024). Self-expression and sharing around chronic illness on TikTok. *AMIA Annual Symposium Proceedings*, 2023, 1334--1343.
 
 Ziems, C., et al. (2024). Can large language models transform computational social science? *Computational Linguistics*, 50(1), 237--291.
 
