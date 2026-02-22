@@ -159,8 +159,7 @@ class BatchProcessor:
                 task_map[str(row['task_id'])] = dict(row)
 
         results = []
-        succeeded = 0
-        errored = 0
+        counts = {'succeeded': 0, 'errored': 0, 'canceled': 0, 'expired': 0}
 
         for result in client.messages.batches.results(batch_id):
             task_id = result.custom_id
@@ -169,7 +168,10 @@ class BatchProcessor:
                 logger.warning(f"Unknown custom_id: {task_id}")
                 continue
 
-            if result.result.type == 'succeeded':
+            result_type = result.result.type
+            counts[result_type] = counts.get(result_type, 0) + 1
+
+            if result_type == 'succeeded':
                 msg = result.result.message
                 text = msg.content[0].text if msg.content else ''
                 tokens = msg.usage.output_tokens if msg.usage else 0
@@ -195,35 +197,40 @@ class BatchProcessor:
                     'tokens_generated': tokens,
                     'inference_params': json.dumps({
                         'temperature': task['temperature'],
-                        'top_p': 0.9,
                         'max_tokens': DEFAULT_MAX_TOKENS,
                         'batch_id': batch_id,
                     }),
-                    'ollama_version': f'anthropic/batch',
+                    'ollama_version': 'anthropic/batch',
                     'quantization': 'none',
                 })
-                succeeded += 1
-            else:
-                errored += 1
-                # Log the actual error detail
-                error_detail = getattr(result.result, 'error', None)
-                if error_detail:
-                    error_msg = getattr(error_detail, 'message', str(error_detail))
-                    error_type = getattr(error_detail, 'type', 'unknown')
+            elif result_type == 'errored':
+                # Docs: result.result.error.type is 'invalid_request' or server error
+                error = getattr(result.result, 'error', None)
+                if error:
+                    err_obj = getattr(error, 'error', error)  # ErrorResponse wraps .error
+                    error_msg = getattr(err_obj, 'message', str(err_obj))
+                    error_type = getattr(err_obj, 'type', 'unknown')
                 else:
-                    error_msg = 'no detail available'
-                    error_type = result.result.type
-                if errored <= 5:  # Only log first 5 in detail to avoid spam
+                    error_msg = 'no detail'
+                    error_type = 'unknown'
+                if counts['errored'] <= 5:
                     logger.warning(f"Task {task_id} {error_type}: {error_msg}")
-                elif errored == 6:
+                elif counts['errored'] == 6:
                     logger.warning("(suppressing further error details...)")
+            elif result_type == 'expired':
+                if counts['expired'] <= 3:
+                    logger.warning(f"Task {task_id} expired (batch hit 24h limit)")
+            # 'canceled' — user-initiated, no action needed
 
         # Insert into DB
         if results:
             self._insert_results(results)
             self._mark_tasks_completed([r['task_id'] for r in results])
 
-        logger.info(f"Collected: {succeeded} succeeded, {errored} errored/expired")
+        logger.info(
+            f"Collected: {counts['succeeded']} succeeded, {counts['errored']} errored, "
+            f"{counts['expired']} expired, {counts['canceled']} canceled"
+        )
         return succeeded
 
     # ── OpenAI Batch ─────────────────────────────────────────────────────
