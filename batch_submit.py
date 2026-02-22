@@ -437,25 +437,35 @@ class BatchProcessor:
 
     # ── Dispatch ─────────────────────────────────────────────────────────
 
-    def submit(self):
-        """Submit pending tasks as a batch. Returns batch_id."""
+    def submit(self, batch_size: int = 1000):
+        """Submit pending tasks in batches. Returns list of batch_ids."""
         tasks = self.get_pending_tasks()
         if not tasks:
             logger.info("No pending tasks found.")
-            return None
+            return []
 
         logger.info(f"Found {len(tasks)} pending tasks for {self.model_key}")
 
-        if self.backend == 'anthropic':
-            return self.submit_anthropic(tasks)
-        elif self.backend == 'openai':
-            return self.submit_openai(tasks)
-        else:
+        if self.backend not in ('anthropic', 'openai'):
             raise ValueError(
                 f"Batch processing not supported for backend '{self.backend}'. "
                 f"Only 'anthropic' and 'openai' offer batch APIs (50% discount). "
                 f"For DeepSeek/MiniMax, use 'python annotate.py --resume' instead."
             )
+
+        # Split into smaller batches for recoverability
+        chunks = [tasks[i:i + batch_size] for i in range(0, len(tasks), batch_size)]
+        logger.info(f"Splitting into {len(chunks)} batch(es) of up to {batch_size} tasks")
+
+        batch_ids = []
+        submit_fn = self.submit_anthropic if self.backend == 'anthropic' else self.submit_openai
+        for i, chunk in enumerate(chunks, 1):
+            logger.info(f"Submitting batch {i}/{len(chunks)} ({len(chunk)} tasks)...")
+            bid = submit_fn(chunk)
+            batch_ids.append(bid)
+            logger.info(f"  Batch {i} submitted: {bid}")
+
+        return batch_ids
 
     def poll(self, batch_id):
         """Poll batch until done."""
@@ -471,18 +481,22 @@ class BatchProcessor:
         elif self.backend == 'openai':
             return self.collect_openai(batch_id)
 
-    def run(self):
+    def run(self, batch_size: int = 1000):
         """Submit, poll, collect — all in one."""
-        batch_id = self.submit()
-        if not batch_id:
+        batch_ids = self.submit(batch_size=batch_size)
+        if not batch_ids:
             return
 
-        logger.info(f"Waiting for batch {batch_id} to complete (up to 24h)...")
-        self.poll(batch_id)
+        total_count = 0
+        for i, batch_id in enumerate(batch_ids, 1):
+            logger.info(f"Waiting for batch {i}/{len(batch_ids)} ({batch_id}) to complete (up to 24h)...")
+            self.poll(batch_id)
 
-        logger.info(f"Collecting results...")
-        count = self.collect(batch_id)
-        logger.info(f"Done! {count} results written to DB.")
+            logger.info(f"Collecting results for batch {i}/{len(batch_ids)}...")
+            count = self.collect(batch_id)
+            total_count += count
+
+        logger.info(f"All done! {total_count} total results written to DB.")
 
     def close(self):
         self.conn.close()
@@ -508,6 +522,8 @@ Not supported (use 'python annotate.py --resume' instead):
     p_submit = sub.add_parser('submit', help='Submit pending tasks as a batch')
     p_submit.add_argument('--experiment-id', type=int, required=True)
     p_submit.add_argument('--model', required=True, help='Model key (e.g., claude-haiku-4.5)')
+    p_submit.add_argument('--batch-size', type=int, default=1000,
+                          help='Max tasks per batch (default: 1000)')
 
     # Status
     p_status = sub.add_parser('status', help='Check batch status')
@@ -524,17 +540,19 @@ Not supported (use 'python annotate.py --resume' instead):
     p_run = sub.add_parser('run', help='Submit, wait, and collect (all-in-one)')
     p_run.add_argument('--experiment-id', type=int, required=True)
     p_run.add_argument('--model', required=True)
+    p_run.add_argument('--batch-size', type=int, default=1000,
+                        help='Max tasks per batch (default: 1000)')
 
     args = parser.parse_args()
 
     if args.command == 'submit':
         proc = BatchProcessor(args.experiment_id, args.model)
         try:
-            batch_id = proc.submit()
-            if batch_id:
-                print(f"\nBatch submitted: {batch_id}")
-                print(f"Check status:  python batch_submit.py status --batch-id {batch_id} --model {args.model}")
-                print(f"Collect later: python batch_submit.py collect --experiment-id {args.experiment_id} --model {args.model} --batch-id {batch_id}")
+            batch_ids = proc.submit(batch_size=args.batch_size)
+            for bid in batch_ids:
+                print(f"\nBatch submitted: {bid}")
+                print(f"  Check status:  python batch_submit.py status --batch-id {bid} --model {args.model}")
+                print(f"  Collect later: python batch_submit.py collect --experiment-id {args.experiment_id} --model {args.model} --batch-id {bid}")
         finally:
             proc.close()
 

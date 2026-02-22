@@ -432,7 +432,9 @@ if __name__ == "__main__":
     parser.add_argument('--resume', type=int, metavar='EXPERIMENT_ID',
                         help='Resume a previous experiment by ID (skips creation)')
     parser.add_argument('--add-models', type=int, metavar='EXPERIMENT_ID',
-                        help='Add new model tasks to an existing experiment, then run')
+                        help='Add new model tasks to an existing experiment')
+    parser.add_argument('--create-only', action='store_true',
+                        help='Only create tasks in DB, do not run them (use with batch_submit.py)')
     parser.add_argument('--name', default=None, help='Experiment name (required for new runs)')
     parser.add_argument('--description', default='', help='Experiment description')
     parser.add_argument('--chunk-limit', type=int, default=100, help='Max chunks to annotate')
@@ -458,7 +460,10 @@ if __name__ == "__main__":
                 num_runs=args.num_runs,
                 splits=args.splits,
             )
-            pipeline.run_tasks(exp_id)
+            if args.create_only:
+                logger.info("Tasks created. Use batch_submit.py to submit via batch API.")
+            else:
+                pipeline.run_tasks(exp_id)
         elif args.resume:
             exp_id = args.resume
             logger.info(f"Resuming experiment {exp_id}")
