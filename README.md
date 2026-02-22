@@ -47,8 +47,7 @@ Set API keys in `.env` to enable:
 | `deepseek-chat` | DeepSeek | deepseek-chat | DeepSeek-V3.2, 671B MoE (37B active) |
 | `minimax-m2.5` | MiniMax | MiniMax-M2.5 | Undisclosed size |
 | `gpt-5-nano` | OpenAI | gpt-5-nano | Fixed temperature only (API restriction) |
-
-Cloud models require `pip install openai` (or `pip install .[cloud]`).
+| `claude-haiku-4.5` | Anthropic | claude-haiku-4-5-20251001 | Anthropic Haiku 4.5 |
 
 ### Environment Setup
 
@@ -58,10 +57,10 @@ conda env create -f environment.yml
 conda activate tiktok-research
 
 # Option 2: pip
-pip install psycopg2-binary numpy scipy requests python-dotenv nltk pytest
+pip install -e .
 
-# For cloud API support
-pip install openai anthropic
+# Or manually:
+pip install psycopg2-binary numpy scipy requests python-dotenv nltk matplotlib pandas openai anthropic pytest
 ```
 
 ### Configuration
@@ -174,6 +173,33 @@ python annotate.py --resume <EXPERIMENT_ID>
 # Or via the orchestrator
 python run_pipeline.py --experiment-id <ID> --skip-to annotate
 ```
+
+### Add a New Model to an Existing Experiment
+```bash
+# Create tasks only (for batch submission)
+python annotate.py --add-models <EXPERIMENT_ID> --models claude-haiku-4.5 --create-only
+
+# Or create and run immediately (full-price)
+python annotate.py --add-models <EXPERIMENT_ID> --models claude-haiku-4.5
+```
+
+### Batch Processing (50% Cost Savings)
+Anthropic and OpenAI offer batch APIs with 50% discounts (24-hour turnaround).
+
+```bash
+# Create tasks without running them
+python annotate.py --add-models 14 --models claude-haiku-4.5 --create-only
+
+# Submit via batch API (50% off)
+python batch_submit.py run --experiment-id 14 --model claude-haiku-4.5
+
+# Or step-by-step:
+python batch_submit.py submit --experiment-id 14 --model claude-haiku-4.5 --batch-size 1000
+python batch_submit.py status --batch-id <BATCH_ID> --model claude-haiku-4.5
+python batch_submit.py collect --experiment-id 14 --model claude-haiku-4.5 --batch-id <BATCH_ID>
+```
+
+Batch state is saved to `outputs/batch_state/` for recovery if disconnected.
 
 ### Run Stability + Reporting on Completed Experiment
 ```bash

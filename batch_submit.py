@@ -206,7 +206,18 @@ class BatchProcessor:
                 succeeded += 1
             else:
                 errored += 1
-                logger.warning(f"Task {task_id} result: {result.result.type}")
+                # Log the actual error detail
+                error_detail = getattr(result.result, 'error', None)
+                if error_detail:
+                    error_msg = getattr(error_detail, 'message', str(error_detail))
+                    error_type = getattr(error_detail, 'type', 'unknown')
+                else:
+                    error_msg = 'no detail available'
+                    error_type = result.result.type
+                if errored <= 5:  # Only log first 5 in detail to avoid spam
+                    logger.warning(f"Task {task_id} {error_type}: {error_msg}")
+                elif errored == 6:
+                    logger.warning("(suppressing further error details...)")
 
         # Insert into DB
         if results:
