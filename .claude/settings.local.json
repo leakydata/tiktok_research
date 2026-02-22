@@ -30,7 +30,8 @@
       "Bash(cmd.exe /c \"C:\\\\Users\\\\schol\\\\miniconda3\\\\condabin\\\\conda.bat run -n tiktok_research python /tmp/db_query.py\")",
       "Bash(cmd.exe /c \"C:\\\\Users\\\\schol\\\\miniconda3\\\\condabin\\\\conda.bat run -n tiktok_research python \"\"C:\\\\Users\\\\schol\\\\Documents\\\\Python Projects\\\\tiktok_research\\\\db_query.py\"\"\")",
       "Bash(/c/Users/schol/anaconda3/envs/tiktok-research/python.exe:*)",
-      "mcp__db__execute_sql"
+      "mcp__db__execute_sql",
+      "Bash(ls:*)"
     ]
   }
 }

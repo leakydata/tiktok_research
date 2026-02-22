@@ -231,7 +231,7 @@ class BatchProcessor:
             f"Collected: {counts['succeeded']} succeeded, {counts['errored']} errored, "
             f"{counts['expired']} expired, {counts['canceled']} canceled"
         )
-        return succeeded
+        return counts['succeeded']
 
     # ── OpenAI Batch ─────────────────────────────────────────────────────
 
